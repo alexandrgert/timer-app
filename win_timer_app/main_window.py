@@ -222,6 +222,7 @@ class TaskRow(QFrame):
     complete_requested = Signal(str)
     resume_requested = Signal(str)
     history_requested = Signal(str)
+    delete_requested = Signal(str)
 
     def __init__(self, controller: AppController, task: Task) -> None:
         super().__init__()
@@ -259,6 +260,13 @@ class TaskRow(QFrame):
         history_button.setObjectName("ghostButton")
         history_button.clicked.connect(lambda: self.history_requested.emit(task.id))
         top.addWidget(history_button)
+
+        delete_button = QPushButton()
+        delete_button.setObjectName("deleteGhostButton")
+        delete_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        delete_button.setToolTip("Удалить задачу")
+        delete_button.clicked.connect(lambda: self.delete_requested.emit(task.id))
+        top.addWidget(delete_button)
         layout.addLayout(top)
 
         controls = QHBoxLayout()
@@ -294,6 +302,7 @@ class DaySection(QFrame):
     complete_requested = Signal(str)
     resume_requested = Signal(str)
     history_requested = Signal(str)
+    delete_requested = Signal(str)
 
     def __init__(self, controller: AppController, day: str, tasks: list[Task]) -> None:
         super().__init__()
@@ -320,6 +329,7 @@ class DaySection(QFrame):
             row.complete_requested.connect(self.complete_requested.emit)
             row.resume_requested.connect(self.resume_requested.emit)
             row.history_requested.connect(self.history_requested.emit)
+            row.delete_requested.connect(self.delete_requested.emit)
             layout.addWidget(row)
 
 
@@ -593,6 +603,15 @@ class MainWindow(QMainWindow):
             QPushButton#ghostButton:hover {
                 background: rgba(21, 25, 35, 0.05);
             }
+            QPushButton#deleteGhostButton {
+                background: transparent;
+                border: none;
+                padding: 4px 6px;
+                color: #454b57;
+            }
+            QPushButton#deleteGhostButton:hover {
+                background: rgba(21, 25, 35, 0.05);
+            }
             QPushButton#presetButton {
                 min-width: 0;
                 padding: 10px 0;
@@ -690,6 +709,7 @@ class MainWindow(QMainWindow):
             section.complete_requested.connect(self._confirm_complete_task)
             section.resume_requested.connect(self._resume_task)
             section.history_requested.connect(self._open_history)
+            section.delete_requested.connect(self._confirm_delete_task)
             self.days_layout.addWidget(section)
         self.days_layout.addStretch(1)
         self._refresh_active_panel()
@@ -806,6 +826,18 @@ class MainWindow(QMainWindow):
         dialog = SessionEditDialog(self.controller, task, self)
         dialog.exec()
         self.refresh_ui()
+
+    def _confirm_delete_task(self, task_id: str) -> None:
+        task = self.controller.find_task(task_id)
+        answer = QMessageBox.question(
+            self,
+            "Удаление задачи",
+            f"Действительно удалить задачу?\n\n{task.title}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.controller.delete_task(task_id)
+            self.refresh_ui()
 
     def _stop_active(self) -> None:
         active = self.controller.active_task()

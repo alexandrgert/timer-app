@@ -182,6 +182,18 @@ class AppController:
         self.save()
         return self.start_task(task_id)
 
+    def delete_task(self, task_id: str) -> None:
+        task = self.find_task(task_id)
+        if task.status == TaskStatus.RUNNING and task.active_session():
+            self.stop_task(task_id)
+        self.state.tasks = [item for item in self.state.tasks if item.id != task_id]
+        if self.pending_confirmation_task_id == task_id:
+            self.pending_confirmation_task_id = None
+            self.pending_confirmation_deadline = None
+        if self.active_task() is None:
+            self.next_reminder_at = None
+        self.save()
+
     def set_filter_open_only(self, value: bool) -> None:
         self.state.ui["filter_open_only"] = value
         self.save()
