@@ -34,6 +34,7 @@ class AppState:
     ui: dict[str, Any] = field(
         default_factory=lambda: {
             "filter_open_only": False,
+            "reminder_interval_minutes": 40,
             "focus_timer": {
                 "selected_minutes": 20,
                 "duration_minutes": None,
@@ -52,6 +53,7 @@ class AppState:
     def from_dict(cls, data: dict[str, Any]) -> "AppState":
         ui = data.get("ui", {})
         ui.setdefault("filter_open_only", False)
+        ui.setdefault("reminder_interval_minutes", 40)
         ui.setdefault(
             "focus_timer",
             {

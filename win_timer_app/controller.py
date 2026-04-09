@@ -7,8 +7,9 @@ from .storage import Storage
 
 
 class AppController:
-    reminder_interval = timedelta(minutes=40)
     reminder_grace = timedelta(minutes=5)
+    _reminder_interval_min_clamp = 1
+    _reminder_interval_max_clamp = 24 * 60
 
     def __init__(self, storage: Storage) -> None:
         self.storage = storage
@@ -17,6 +18,7 @@ class AppController:
         self.pending_confirmation_deadline: datetime | None = None
         self.next_reminder_at: datetime | None = None
         self.ensure_rollover()
+        self.state.ui.setdefault("reminder_interval_minutes", 40)
         self._rebuild_runtime_state()
 
     def _focus_timer(self) -> dict[str, object]:
@@ -82,9 +84,35 @@ class AppController:
     def _rebuild_runtime_state(self) -> None:
         active = self.active_task()
         if active and active.active_session():
-            self.next_reminder_at = active.active_session().start_dt + self.reminder_interval
+            self.next_reminder_at = active.active_session().start_dt + self._reminder_interval_td()
         else:
             self.next_reminder_at = None
+
+    def _reminder_interval_td(self) -> timedelta:
+        return timedelta(minutes=self.reminder_interval_minutes())
+
+    def reminder_interval_minutes(self) -> int:
+        raw = self.state.ui.get("reminder_interval_minutes", 40)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 40
+        return max(self._reminder_interval_min_clamp, min(value, self._reminder_interval_max_clamp))
+
+    def set_reminder_interval_minutes(self, minutes: int) -> None:
+        before = self.reminder_interval_minutes()
+        value = max(self._reminder_interval_min_clamp, min(int(minutes), self._reminder_interval_max_clamp))
+        self.state.ui["reminder_interval_minutes"] = value
+        if value != before:
+            self._apply_reminder_interval_change()
+        self.save()
+
+    def _apply_reminder_interval_change(self) -> None:
+        if self.pending_confirmation_task_id:
+            return
+        active = self.active_task()
+        if active and active.active_session():
+            self.next_reminder_at = datetime.now() + self._reminder_interval_td()
 
     def all_tasks(self) -> list[Task]:
         self.ensure_rollover()
@@ -142,7 +170,7 @@ class AppController:
         task.status = TaskStatus.RUNNING
         self.pending_confirmation_task_id = None
         self.pending_confirmation_deadline = None
-        self.next_reminder_at = now + self.reminder_interval
+        self.next_reminder_at = now + self._reminder_interval_td()
         self.save()
         return task
 
@@ -265,7 +293,7 @@ class AppController:
 
         if self.next_reminder_at is None:
             started_at = active.active_session().start_dt if active.active_session() else now
-            self.next_reminder_at = started_at + self.reminder_interval
+            self.next_reminder_at = started_at + self._reminder_interval_td()
         return ("running", active)
 
     def confirm_continue(self, task_id: str) -> None:
@@ -274,7 +302,39 @@ class AppController:
             return
         self.pending_confirmation_task_id = None
         self.pending_confirmation_deadline = None
-        self.next_reminder_at = datetime.now() + self.reminder_interval
+        self.next_reminder_at = datetime.now() + self._reminder_interval_td()
+        self.save()
+
+    def add_session(self, task_id: str, started_at: datetime, ended_at: datetime) -> Session:
+        if ended_at <= started_at:
+            raise ValueError("Время окончания должно быть позже начала.")
+        task = self.find_task(task_id)
+        session = Session(id=make_id(), started_at=started_at.isoformat(), ended_at=ended_at.isoformat())
+        task.sessions.append(session)
+        task.sessions.sort(key=lambda item: item.started_at)
+        self.save()
+        return session
+
+    def delete_session(self, task_id: str, session_id: str) -> None:
+        task = self.find_task(task_id)
+        removed_running = False
+        for index, session in enumerate(task.sessions):
+            if session.id != session_id:
+                continue
+            if session.ended_at is None:
+                removed_running = True
+            del task.sessions[index]
+            break
+        else:
+            raise KeyError(session_id)
+        if removed_running and task.status == TaskStatus.RUNNING:
+            task.status = TaskStatus.PAUSED if task.sessions else TaskStatus.OPEN
+        if self.pending_confirmation_task_id == task_id:
+            if task.active_session() is None:
+                self.pending_confirmation_task_id = None
+                self.pending_confirmation_deadline = None
+        if self.active_task() is None:
+            self.next_reminder_at = None
         self.save()
 
     def update_session(self, task_id: str, session_id: str, started_at: datetime, ended_at: datetime) -> None:

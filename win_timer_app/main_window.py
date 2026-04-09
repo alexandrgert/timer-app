@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDateTimeEdit,
     QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStyle,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -140,6 +142,40 @@ class CreateTaskDialog(QDialog):
         self.accept()
 
 
+class SettingsDialog(QDialog):
+    def __init__(self, controller: AppController, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.setWindowTitle("Настройки")
+        self.resize(440, 200)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        hint = QLabel(
+            "Через указанное время после старта таймера или после ответа «Продолжить» "
+            "приложение снова спросит, продолжать ли работу над задачей."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        form = QFormLayout()
+        self.reminder_spin = QSpinBox()
+        self.reminder_spin.setRange(1, 24 * 60)
+        self.reminder_spin.setSuffix(" мин")
+        self.reminder_spin.setValue(controller.reminder_interval_minutes())
+        form.addRow("Интервал напоминания", self.reminder_spin)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
 class SessionEditDialog(QDialog):
     def __init__(self, controller: AppController, task: Task, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -169,10 +205,21 @@ class SessionEditDialog(QDialog):
         form.addRow("Окончание", self.end_edit)
         layout.addLayout(form)
 
+        actions = QHBoxLayout()
+        add_button = QPushButton("Добавить запись")
+        add_button.setObjectName("ghostButton")
+        add_button.clicked.connect(self._add_session)
+        actions.addWidget(add_button)
+        self.delete_session_button = QPushButton("Удалить запись")
+        self.delete_session_button.setObjectName("deleteGhostButton")
+        self.delete_session_button.clicked.connect(self._delete_current_session)
+        actions.addWidget(self.delete_session_button)
+        actions.addStretch()
         save_button = QPushButton("Сохранить интервал")
         save_button.setObjectName("primaryButton")
         save_button.clicked.connect(self._save_current_session)
-        layout.addWidget(save_button)
+        actions.addWidget(save_button)
+        layout.addLayout(actions)
 
         self._reload()
 
@@ -188,6 +235,46 @@ class SessionEditDialog(QDialog):
             self.list_widget.addItem(item)
         if self.list_widget.count():
             self.list_widget.setCurrentRow(0)
+        else:
+            self.selected_session_id = None
+            end_q = QDateTime.currentDateTime()
+            self.end_edit.setDateTime(end_q)
+            self.start_edit.setDateTime(end_q.addSecs(-3600))
+        self.delete_session_button.setEnabled(self.list_widget.count() > 0)
+
+    def _add_session(self) -> None:
+        start = self.start_edit.dateTime().toPython()
+        end = self.end_edit.dateTime().toPython()
+        try:
+            session = self.controller.add_session(self.task.id, start, end)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Ошибка", str(exc))
+            return
+        self.task = self.controller.find_task(self.task.id)
+        self._reload()
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == session.id:
+                self.list_widget.setCurrentRow(row)
+                break
+
+    def _delete_current_session(self) -> None:
+        if not self.selected_session_id:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Удаление",
+            "Удалить выбранную запись из истории?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.controller.delete_session(self.task.id, self.selected_session_id)
+        except KeyError:
+            return
+        self.task = self.controller.find_task(self.task.id)
+        self._reload()
 
     def _load_current_session(self, item: QListWidgetItem | None) -> None:
         if not item:
@@ -349,6 +436,7 @@ class MainWindow(QMainWindow):
         self.create_dialog = CreateTaskDialog(self)
         self.create_dialog.create_requested.connect(self._create_task)
         self._build_ui()
+        self._build_menu_bar()
         self._build_tray()
         self._apply_styles()
         self.refresh_ui()
@@ -492,6 +580,12 @@ class MainWindow(QMainWindow):
         timer_layout.addStretch(1)
         main_layout.addWidget(self.timer_card, 1)
 
+    def _build_menu_bar(self) -> None:
+        settings_action = QAction("Параметры…", self)
+        settings_action.triggered.connect(self._open_settings)
+        menu = self.menuBar().addMenu("Настройки")
+        menu.addAction(settings_action)
+
     def _build_tray(self) -> None:
         self.tray = QSystemTrayIcon(self.app_icon, self)
         if not self.tray_available:
@@ -501,6 +595,12 @@ class MainWindow(QMainWindow):
         show_action = QAction("Открыть", self)
         show_action.triggered.connect(self._restore_from_tray)
         tray_menu.addAction(show_action)
+
+        settings_action = QAction("Настройки…", self)
+        settings_action.triggered.connect(self._open_settings)
+        tray_menu.addAction(settings_action)
+
+        tray_menu.addSeparator()
 
         exit_action = QAction("Выход", self)
         exit_action.triggered.connect(self._exit_application)
@@ -765,6 +865,11 @@ class MainWindow(QMainWindow):
             button.style().unpolish(button)
             button.style().polish(button)
             button.update()
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self.controller, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.controller.set_reminder_interval_minutes(dialog.reminder_spin.value())
 
     def _open_create_dialog(self) -> None:
         self.create_dialog.open_clean()
