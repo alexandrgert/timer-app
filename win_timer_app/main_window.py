@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStyle,
     QSystemTrayIcon,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -420,6 +421,143 @@ class DaySection(QFrame):
             layout.addWidget(row)
 
 
+class FloatingTimer(QWidget):
+    """Small always-on-top translucent widget shown while a task runs in the tray."""
+
+    stop_requested = Signal()
+    start_requested = Signal()
+    restore_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowOpacity(0.9)
+        self._drag_offset = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame()
+        card.setObjectName("floatingCard")
+        outer.addWidget(card)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 10, 14, 12)
+        layout.setSpacing(6)
+
+        self.name_label = QLabel("Задача")
+        self.name_label.setObjectName("floatingName")
+        layout.addWidget(self.name_label)
+
+        bottom = QHBoxLayout()
+        bottom.setSpacing(8)
+
+        self.time_label = QLabel("00:00:00")
+        self.time_label.setObjectName("floatingTime")
+        bottom.addWidget(self.time_label)
+        bottom.addStretch(1)
+
+        self.start_button = QPushButton("▶")
+        self.start_button.setObjectName("floatingStart")
+        self.start_button.setFixedSize(30, 26)
+        self.start_button.setToolTip("Старт")
+        self.start_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.start_button.clicked.connect(self.start_requested.emit)
+        bottom.addWidget(self.start_button)
+
+        self.stop_button = QPushButton("⏸")
+        self.stop_button.setObjectName("floatingStop")
+        self.stop_button.setFixedSize(30, 26)
+        self.stop_button.setToolTip("Стоп")
+        self.stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_button.clicked.connect(self.stop_requested.emit)
+        bottom.addWidget(self.stop_button)
+
+        layout.addLayout(bottom)
+
+        self.setFixedWidth(232)
+        self.setStyleSheet(
+            """
+            QFrame#floatingCard {
+                background: rgba(18, 20, 25, 0.88);
+                border: 1px solid rgba(255, 255, 255, 0.16);
+                border-radius: 16px;
+            }
+            QLabel#floatingName {
+                background: transparent;
+                color: rgba(255, 255, 255, 0.82);
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QLabel#floatingTime {
+                background: transparent;
+                color: #ffffff;
+                font-size: 22px;
+                font-weight: 800;
+                letter-spacing: 1px;
+            }
+            QPushButton#floatingStart, QPushButton#floatingStop {
+                background: rgba(255, 255, 255, 0.12);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 8px;
+                padding: 0;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton#floatingStart:hover, QPushButton#floatingStop:hover {
+                background: rgba(255, 255, 255, 0.24);
+            }
+            QPushButton#floatingStart:disabled, QPushButton#floatingStop:disabled {
+                color: rgba(255, 255, 255, 0.32);
+                background: rgba(255, 255, 255, 0.05);
+            }
+            """
+        )
+
+    def update_view(self, title: str, elapsed: str, running: bool) -> None:
+        elided = self.name_label.fontMetrics().elidedText(
+            title, Qt.TextElideMode.ElideRight, 196
+        )
+        self.name_label.setText(elided)
+        self.time_label.setText(elapsed)
+        self.stop_button.setEnabled(running)
+        self.start_button.setEnabled(not running)
+
+    def show_at_default_corner(self) -> None:
+        if not self.isVisible():
+            self.adjustSize()
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                geo = screen.availableGeometry()
+                x = geo.right() - self.width() - 24
+                y = geo.bottom() - self.height() - 24
+                self.move(max(geo.left(), x), max(geo.top(), y))
+        self.show()
+        self.raise_()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.restore_requested.emit()
+
+
 class MainWindow(QMainWindow):
     focus_presets = (5, 10, 20, 30, 40)
 
@@ -435,6 +573,11 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         self.create_dialog = CreateTaskDialog(self)
         self.create_dialog.create_requested.connect(self._create_task)
+        self._mini_task_id: str | None = None
+        self.floating = FloatingTimer()
+        self.floating.stop_requested.connect(self._floating_stop)
+        self.floating.start_requested.connect(self._floating_start)
+        self.floating.restore_requested.connect(self._restore_from_tray)
         self._build_ui()
         self._build_menu_bar()
         self._build_tray()
@@ -447,8 +590,14 @@ class MainWindow(QMainWindow):
         self.clock_timer.start()
 
     def _build_ui(self) -> None:
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
+        self.setCentralWidget(self.tabs)
+        self.tabs.addTab(self._build_tasks_tab(), "Задачи")
+        self.tabs.addTab(self._build_focus_tab(), "Фокус")
+
+    def _build_tasks_tab(self) -> QWidget:
         root = QWidget()
-        self.setCentralWidget(root)
 
         main_layout = QHBoxLayout(root)
         main_layout.setContentsMargins(18, 18, 18, 18)
@@ -535,11 +684,27 @@ class MainWindow(QMainWindow):
         self.complete_active_button.clicked.connect(self._complete_active)
         timer_layout.addWidget(self.complete_active_button)
 
+        timer_layout.addStretch(1)
+        main_layout.addWidget(self.timer_card, 1)
+        return root
+
+    def _build_focus_tab(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(40, 30, 40, 30)
+        outer.setSpacing(0)
+        outer.addStretch(1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+
         focus_card = QFrame()
-        focus_card.setObjectName("focusCard")
+        focus_card.setObjectName("focusTabCard")
+        focus_card.setMinimumWidth(380)
+        focus_card.setMaximumWidth(560)
         focus_layout = QVBoxLayout(focus_card)
-        focus_layout.setContentsMargins(14, 14, 14, 14)
-        focus_layout.setSpacing(8)
+        focus_layout.setContentsMargins(28, 26, 28, 26)
+        focus_layout.setSpacing(12)
 
         focus_title = QLabel("Режим концентрации")
         focus_title.setObjectName("focusHeading")
@@ -575,10 +740,11 @@ class MainWindow(QMainWindow):
         self.focus_stop_button.clicked.connect(self._stop_focus_timer)
         focus_layout.addWidget(self.focus_stop_button)
 
-        timer_layout.addWidget(focus_card)
-
-        timer_layout.addStretch(1)
-        main_layout.addWidget(self.timer_card, 1)
+        row.addWidget(focus_card)
+        row.addStretch(1)
+        outer.addLayout(row)
+        outer.addStretch(1)
+        return page
 
     def _build_menu_bar(self) -> None:
         settings_action = QAction("Параметры…", self)
@@ -647,10 +813,30 @@ class MainWindow(QMainWindow):
                     stop:0 #0f1613, stop:0.45 #163125, stop:1 #254439);
                 border: 1px solid rgba(139, 214, 167, 0.22);
             }
-            QFrame#focusCard {
-                background: rgba(255, 255, 255, 0.06);
+            QTabWidget#mainTabs::pane {
+                border: none;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background: transparent;
+                color: #5f6b7c;
+                padding: 8px 20px;
+                margin-right: 6px;
+                border-radius: 12px;
+                font-weight: 600;
+            }
+            QTabBar::tab:selected {
+                background: #151923;
+                color: white;
+            }
+            QTabBar::tab:hover:!selected {
+                background: rgba(21, 25, 35, 0.06);
+            }
+            QFrame#focusTabCard {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #121419, stop:0.45 #1c1f27, stop:1 #30333d);
+                border-radius: 28px;
                 border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 20px;
             }
             QPushButton {
                 background: #ffffff;
@@ -963,12 +1149,14 @@ class MainWindow(QMainWindow):
             self._show_continue_prompt(task)
         elif status == "auto_stopped" and task:
             self.refresh_ui()
+            grace_minutes = int(self.controller.reminder_grace.total_seconds() // 60)
             self._show_tray_message(
                 "Таймер поставлен на стоп",
-                f"{task.title}: подтверждение не было получено в течение 5 минут.",
+                f"{task.title}: подтверждение не было получено в течение {grace_minutes} мин.",
                 QSystemTrayIcon.MessageIcon.Warning,
                 6000,
             )
+        self._update_floating()
         if focus_status == "finished":
             QApplication.beep()
             QApplication.beep()
@@ -987,16 +1175,19 @@ class MainWindow(QMainWindow):
             )
 
     def _show_continue_prompt(self, task: Task) -> None:
+        minutes = self.controller.reminder_interval_minutes()
+        grace_minutes = int(self.controller.reminder_grace.total_seconds() // 60)
         self._show_tray_message(
             "Подтвердите продолжение",
-            f"{task.title} выполняется уже 40 минут. Без подтверждения через 5 минут таймер остановится.",
+            f"{task.title} выполняется уже {minutes} мин. "
+            f"Без подтверждения через {grace_minutes} мин таймер остановится.",
             QSystemTrayIcon.MessageIcon.Information,
             6000,
         )
         answer = QMessageBox.question(
             self,
             "Подтверждение продолжения",
-            f"Задача выполняется уже 40 минут.\n\n{task.title}\n\nПродолжаете работу?",
+            f"Задача выполняется уже {minutes} мин.\n\n{task.title}\n\nПродолжаете работу?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
@@ -1019,6 +1210,7 @@ class MainWindow(QMainWindow):
         if not self.tray_available or not self.tray.isVisible():
             return
         self.hide()
+        self._show_floating()
         self._show_tray_message(
             "Приложение свернуто",
             "Таймер продолжает работать в системном трее.",
@@ -1026,10 +1218,55 @@ class MainWindow(QMainWindow):
             4000,
         )
 
+    def _show_floating(self) -> None:
+        active = self.controller.active_task()
+        if active is not None:
+            self._mini_task_id = active.id
+        if self._mini_task_id is None:
+            return
+        try:
+            self.controller.find_task(self._mini_task_id)
+        except KeyError:
+            self._mini_task_id = None
+            return
+        self.floating.show_at_default_corner()
+        self._update_floating()
+
+    def _update_floating(self) -> None:
+        if not self.floating.isVisible():
+            return
+        if self._mini_task_id is None:
+            self.floating.hide()
+            return
+        try:
+            task = self.controller.find_task(self._mini_task_id)
+        except KeyError:
+            self._mini_task_id = None
+            self.floating.hide()
+            return
+        running = task.status == TaskStatus.RUNNING and task.active_session() is not None
+        elapsed = format_duration(task.total_seconds(datetime.now()))
+        self.floating.update_view(task.title, elapsed, running)
+
+    def _floating_stop(self) -> None:
+        if self._mini_task_id is None:
+            return
+        self.controller.stop_task(self._mini_task_id)
+        self.refresh_ui()
+        self._update_floating()
+
+    def _floating_start(self) -> None:
+        if self._mini_task_id is None:
+            return
+        self.controller.start_task(self._mini_task_id)
+        self.refresh_ui()
+        self._update_floating()
+
     def _exit_application(self) -> None:
         active = self.controller.active_task()
         if active:
             self.controller.stop_task(active.id)
+        self.floating.hide()
         if self.tray_available:
             self.tray.hide()
         self.app.quit()
@@ -1057,6 +1294,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._hide_to_tray)
 
     def _restore_from_tray(self) -> None:
+        self.floating.hide()
         self.showNormal()
         self.raise_()
         self.activateWindow()
