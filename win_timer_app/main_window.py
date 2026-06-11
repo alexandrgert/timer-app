@@ -15,6 +15,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -42,6 +44,8 @@ from PySide6.QtWidgets import (
     QStyle,
     QSystemTrayIcon,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -444,9 +448,19 @@ class SessionEditDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
-        self.list_widget = QListWidget()
-        self.list_widget.currentItemChanged.connect(self._load_current_session)
-        layout.addWidget(self.list_widget)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["", "Начало", "Окончание", "Длительность"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.itemSelectionChanged.connect(self._load_current_session)
+        layout.addWidget(self.table)
 
         form = QFormLayout()
         self.start_edit = QDateTimeEdit()
@@ -482,24 +496,53 @@ class SessionEditDialog(QDialog):
 
         self._reload()
 
+    @staticmethod
+    def _readonly_cell(text: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        return item
+
     def _reload(self) -> None:
-        self.list_widget.clear()
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
         for session in self.task.sessions:
             start = datetime.fromisoformat(session.started_at)
             end = datetime.fromisoformat(session.ended_at) if session.ended_at else None
             duration = session.duration_seconds(datetime.now())
-            title = f"{start.strftime('%d.%m %H:%M:%S')} -> {end.strftime('%d.%m %H:%M:%S') if end else 'идет'}  ({format_duration(duration)})"
-            item = QListWidgetItem(title)
-            item.setData(Qt.ItemDataRole.UserRole, session.id)
-            self.list_widget.addItem(item)
-        if self.list_widget.count():
-            self.list_widget.setCurrentRow(0)
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            check = QTableWidgetItem()
+            check.setFlags(
+                Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            check.setCheckState(Qt.CheckState.Unchecked)
+            check.setData(Qt.ItemDataRole.UserRole, session.id)
+            self.table.setItem(row, 0, check)
+            self.table.setItem(row, 1, self._readonly_cell(start.strftime("%d.%m.%Y %H:%M:%S")))
+            self.table.setItem(
+                row, 2,
+                self._readonly_cell(end.strftime("%d.%m.%Y %H:%M:%S") if end else "идёт"),
+            )
+            self.table.setItem(row, 3, self._readonly_cell(format_duration(duration)))
+        self.table.blockSignals(False)
+        if self.table.rowCount():
+            self.table.selectRow(0)
         else:
             self.selected_session_id = None
             end_q = QDateTime.currentDateTime()
             self.end_edit.setDateTime(end_q)
             self.start_edit.setDateTime(end_q.addSecs(-3600))
-        self.delete_session_button.setEnabled(self.list_widget.count() > 0)
+        self.delete_session_button.setEnabled(self.table.rowCount() > 0)
+
+    def _session_id_at(self, row: int) -> str | None:
+        item = self.table.item(row, 0)
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _current_session_id(self) -> str | None:
+        row = self.table.currentRow()
+        return self._session_id_at(row) if row >= 0 else None
 
     def _add_session(self) -> None:
         start = self.start_edit.dateTime().toPython()
@@ -511,34 +554,44 @@ class SessionEditDialog(QDialog):
             return
         self.task = self.controller.find_task(self.task.id)
         self._reload()
-        for row in range(self.list_widget.count()):
-            item = self.list_widget.item(row)
-            if item.data(Qt.ItemDataRole.UserRole) == session.id:
-                self.list_widget.setCurrentRow(row)
+        for row in range(self.table.rowCount()):
+            if self._session_id_at(row) == session.id:
+                self.table.selectRow(row)
                 break
 
     def _delete_current_session(self) -> None:
-        if not self.selected_session_id:
+        ids = [
+            self._session_id_at(row)
+            for row in range(self.table.rowCount())
+            if self.table.item(row, 0)
+            and self.table.item(row, 0).checkState() == Qt.CheckState.Checked
+        ]
+        if not ids:
+            current = self._current_session_id()
+            ids = [current] if current else []
+        ids = [sid for sid in ids if sid]
+        if not ids:
             return
         answer = QMessageBox.question(
             self,
             "Удаление",
-            "Удалить выбранную запись из истории?",
+            f"Удалить выбранные записи ({len(ids)})?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            self.controller.delete_session(self.task.id, self.selected_session_id)
-        except KeyError:
-            return
+        for sid in ids:
+            try:
+                self.controller.delete_session(self.task.id, sid)
+            except KeyError:
+                pass
         self.task = self.controller.find_task(self.task.id)
         self._reload()
 
-    def _load_current_session(self, item: QListWidgetItem | None) -> None:
-        if not item:
+    def _load_current_session(self) -> None:
+        session_id = self._current_session_id()
+        if session_id is None:
             return
-        session_id = item.data(Qt.ItemDataRole.UserRole)
         session = next((entry for entry in self.task.sessions if entry.id == session_id), None)
         if session is None:
             return
