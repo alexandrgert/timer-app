@@ -1,29 +1,16 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .env_loader import load_env
 
+from .app_info import DESKTOP_FILE_NAME, resolve_app_title
 from .controller import AppController
 from .main_window import MainWindow
 from .single_instance import InstanceAcquireResult, SingleInstanceGuard
 from .storage import Storage
-
-APP_TITLE_BASE = "TaskTimer link B24"
-DESKTOP_FILE_NAME = "tasktimer-link-b24"
-
-
-def resolve_app_title() -> str:
-    """Заголовок окна; в .deb рядом с бинарником лежит файл VERSION."""
-    version_file = Path(sys.executable).resolve().parent / "VERSION"
-    if version_file.is_file():
-        version = version_file.read_text(encoding="utf-8").strip()
-        if version:
-            return f"{APP_TITLE_BASE} {version}"
-    return APP_TITLE_BASE
 
 
 def main() -> int:

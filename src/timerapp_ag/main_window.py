@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 
 from PySide6.QtCore import (
@@ -52,8 +53,10 @@ from PySide6.QtWidgets import (
 
 from .bitrix import Bitrix24Client, entity_url, looks_like_webhook
 from .bitrix_config import BitrixPortalConfig
+from .app_info import resolve_app_title
 from .controller import AppController, format_day_label, format_duration, format_hm
 from .models import Task, TaskStatus
+from .runtime_info import build_about_report
 
 
 def bitrix_client(controller: AppController, webhook: str | None = None) -> Bitrix24Client:
@@ -340,6 +343,35 @@ class _CallableThread(QThread):
             self.failed.emit(str(exc))
             return
         self.succeeded.emit(result)
+
+
+class AboutDialog(QDialog):
+    def __init__(self, controller: AppController, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("О программе")
+        self.setMinimumWidth(520)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        title = QLabel(resolve_app_title())
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+
+        details = QPlainTextEdit()
+        details.setReadOnly(True)
+        details.setPlainText(
+            build_about_report(
+                stored_webhook=controller.bitrix_webhook(),
+                data_path=controller.storage.path,
+            )
+        )
+        details.setMinimumHeight(320)
+        layout.addWidget(details)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
 
 
 class SettingsDialog(QDialog):
@@ -1168,7 +1200,7 @@ class MainWindow(QMainWindow):
         self.tray_available = QSystemTrayIcon.isSystemTrayAvailable()
         self.app_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
         self.setWindowIcon(self.app_icon)
-        self.setWindowTitle("Task Timer")
+        self.setWindowTitle(resolve_app_title())
         self.resize(980, 680)
         self.setMinimumSize(800, 600)
         self.create_dialog = CreateTaskDialog(self.controller, self)
@@ -1399,14 +1431,23 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_menu_bar(self) -> None:
+        bar = self.menuBar()
+        if sys.platform != "darwin":
+            bar.setNativeMenuBar(False)
+
+        settings_menu = bar.addMenu("Настройки")
         settings_action = QAction("Параметры…", self)
         settings_action.triggered.connect(self._open_settings)
-        settings_menu = self.menuBar().addMenu("Настройки")
         settings_menu.addAction(settings_action)
 
         exit_action = QAction("Выход", self)
-        exit_action.triggered.connect(self._exit_application)
-        self.menuBar().addAction(exit_action)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self._request_exit)
+        bar.addAction(exit_action)
+
+        about_action = QAction("О программе", self)
+        about_action.triggered.connect(self._open_about)
+        bar.addAction(about_action)
 
     def _build_tray(self) -> None:
         self.tray = QSystemTrayIcon(self.app_icon, self)
@@ -1422,10 +1463,14 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._open_settings)
         tray_menu.addAction(settings_action)
 
+        about_action = QAction("О программе", self)
+        about_action.triggered.connect(self._open_about)
+        tray_menu.addAction(about_action)
+
         tray_menu.addSeparator()
 
         exit_action = QAction("Выход", self)
-        exit_action.triggered.connect(self._exit_application)
+        exit_action.triggered.connect(self._request_exit)
         tray_menu.addAction(exit_action)
 
         self.tray.setContextMenu(tray_menu)
@@ -1446,6 +1491,33 @@ class MainWindow(QMainWindow):
             }
             QMainWindow {
                 background: #eef1f4;
+            }
+            QMenuBar {
+                background: #eef1f4;
+                color: #14161b;
+                padding: 4px 10px;
+                spacing: 4px;
+            }
+            QMenuBar::item {
+                background: transparent;
+                padding: 6px 12px;
+                border-radius: 8px;
+            }
+            QMenuBar::item:selected {
+                background: rgba(21, 25, 35, 0.08);
+            }
+            QMenu {
+                background: #ffffff;
+                border: 1px solid rgba(20, 22, 27, 0.12);
+                border-radius: 10px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 8px 24px 8px 12px;
+                border-radius: 6px;
+            }
+            QMenu::item:selected {
+                background: rgba(21, 25, 35, 0.08);
             }
             QFrame#createCard, QFrame#dayCard {
                 background: rgba(255, 255, 255, 0.92);
@@ -1773,6 +1845,10 @@ class MainWindow(QMainWindow):
             button.style().polish(button)
             button.update()
 
+    def _open_about(self) -> None:
+        dialog = AboutDialog(self.controller, self)
+        dialog.exec()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.controller, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -2081,6 +2157,22 @@ class MainWindow(QMainWindow):
         self.refresh_ui()
         self._update_floating()
 
+    def _request_exit(self) -> None:
+        if not self._confirm_exit():
+            return
+        self._exit_application()
+
+    def _confirm_exit(self) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Закрытие приложения",
+            "Завершить работу с приложением?\n\n"
+            "Да: остановить текущую задачу и закрыть приложение.\n"
+            "Нет: оставить приложение запущенным.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _exit_application(self) -> None:
         active = self.controller.active_task()
         if active:
@@ -2095,7 +2187,9 @@ class MainWindow(QMainWindow):
             answer = QMessageBox.question(
                 self,
                 "Закрытие приложения",
-                "Завершить работу с приложением?\n\nДа: остановить текущую задачу и закрыть приложение.\nНет: свернуть в трей.",
+                "Завершить работу с приложением?\n\n"
+                "Да: остановить текущую задачу и закрыть приложение.\n"
+                "Нет: свернуть в трей.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if answer == QMessageBox.StandardButton.Yes:
