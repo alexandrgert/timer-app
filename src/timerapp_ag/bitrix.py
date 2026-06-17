@@ -28,8 +28,17 @@ class Bitrix24Error(Exception):
     """Raised for configuration problems with the Bitrix24 client."""
 
 
-# Smart-process (СПА) журнала работ (запись о затраченном времени по проекту).
+# Smart-process (СПА) журнала работ — default for webmens; override via BitrixPortalConfig.
 WORKLOG_ENTITY_TYPE_ID = 1092
+MIN_WORKLOG_HOURS = 0.01
+
+
+def seconds_to_worklog_hours(total_seconds: int) -> float:
+    """Convert seconds to portal hours, never returning 0 for non-zero work."""
+    if total_seconds <= 0:
+        return MIN_WORKLOG_HOURS
+    hours = round(total_seconds / 3600, 2)
+    return max(hours, MIN_WORKLOG_HOURS)
 
 
 def entity_url(
@@ -69,9 +78,7 @@ def _ensure_event_loop() -> None:
     (Python 3.9). Worker threads (e.g. a ``QThread``) have none, so create one.
     """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("event loop is closed")
+        asyncio.get_running_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -304,16 +311,18 @@ class Bitrix24Client:
     def add_project_time(
         self, project_id, date_iso: str, hours: float, comment: str, responsible_id
     ) -> str:
-        """Create a worklog item (СПА 1092) for a project. Returns the new item id."""
+        """Create a worklog item for a project. Returns the new item id."""
+        cfg = self._portal_config
         fields = {
-            "parentId150": int(project_id),
+            cfg.worklog_parent_field: int(project_id),
             "assignedById": int(responsible_id),
-            "ufCrm88HoursWork": float(hours),
-            "ufCrm88CommentWork": comment,
-            "ufCrm88DateWork": date_iso,
+            cfg.worklog_hours_field: float(hours),
+            cfg.worklog_comment_field: comment,
+            cfg.worklog_date_field: date_iso,
         }
         result = self._post(
-            "crm.item.add", {"entityTypeId": WORKLOG_ENTITY_TYPE_ID, "fields": fields}
+            "crm.item.add",
+            {"entityTypeId": cfg.worklog_entity_type_id, "fields": fields},
         )
         item = result.get("item", result) if isinstance(result, dict) else {}
         return str(item.get("id"))

@@ -65,8 +65,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .bitrix import Bitrix24Client, entity_url, looks_like_webhook
+from .bitrix import Bitrix24Client, entity_url, looks_like_webhook, seconds_to_worklog_hours
 from .bitrix_config import BitrixPortalConfig
+from .bitrix_transfer_journal import record_transfer_result
 from .app_info import resolve_app_title
 from .controller import AppController, format_day_label, format_duration, format_hm
 from .models import Task, TaskStatus
@@ -968,6 +969,7 @@ class SessionEditDialog(QDialog):
         self.controller = controller
         self.task = task
         self.selected_session_id: str | None = None
+        self._transfer_thread: _CallableThread | None = None
         self.setWindowTitle("История сессий")
         self.resize(660, 480)
 
@@ -1065,6 +1067,19 @@ class SessionEditDialog(QDialog):
         layout.addLayout(actions)
 
         self._reload()
+
+    def _await_worker_threads(self) -> None:
+        thread = self._transfer_thread
+        if thread is not None and thread.isRunning():
+            thread.wait(8000)
+
+    def reject(self) -> None:
+        self._await_worker_threads()
+        super().reject()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._await_worker_threads()
+        super().closeEvent(event)
 
     @staticmethod
     def _readonly_cell(text: str) -> QTableWidgetItem:
@@ -1229,16 +1244,21 @@ class SessionEditDialog(QDialog):
         source = link["source"]
         entity_id = link["id"]
         last_date = max(s.start_dt for s in sessions).date().isoformat()
+        task_id = self.task.id
+        storage = self.controller.storage
         self.transfer_button.setEnabled(False)
 
         def work():
             client = bitrix_client(self.controller, webhook)
             if source == "project":
-                hours = round(total_seconds / 3600, 2)
-                return client.add_project_time(
+                hours = seconds_to_worklog_hours(total_seconds)
+                record_id = client.add_project_time(
                     entity_id, last_date, hours, name, client.current_user_id()
                 )
-            return client.add_task_time(entity_id, total_seconds, name)
+            else:
+                record_id = client.add_task_time(entity_id, total_seconds, name)
+            record_transfer_result(storage, task_id, session_ids, record_id)
+            return record_id
 
         self._transfer_thread = _CallableThread(work, self)
         self._transfer_thread.succeeded.connect(
@@ -1249,6 +1269,7 @@ class SessionEditDialog(QDialog):
 
     def _on_transferred(self, session_ids, record_id) -> None:
         self.controller.mark_sessions_transferred(self.task.id, session_ids, record_id)
+        self.controller.finalize_sessions_transfer(self.task.id, session_ids, record_id)
         self.task = self.controller.find_task(self.task.id)
         self.transfer_button.setEnabled(True)
         self._reload()
@@ -1468,6 +1489,7 @@ class FloatingTimer(QWidget):
     stop_requested = Signal()
     start_requested = Signal()
     restore_requested = Signal()
+    close_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -1491,9 +1513,22 @@ class FloatingTimer(QWidget):
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(6)
 
+        header = QHBoxLayout()
+        header.setSpacing(8)
+
         self.name_label = QLabel("Задача")
         self.name_label.setObjectName("floatingName")
-        layout.addWidget(self.name_label)
+        header.addWidget(self.name_label, 1)
+
+        self.close_button = QPushButton("✕")
+        self.close_button.setObjectName("floatingClose")
+        self.close_button.setFixedSize(20, 20)
+        self.close_button.setToolTip("Скрыть виджет (таймер продолжит работать)")
+        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_button.clicked.connect(self.close_requested.emit)
+        header.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(header)
 
         bottom = QHBoxLayout()
         bottom.setSpacing(8)
@@ -1553,6 +1588,19 @@ class FloatingTimer(QWidget):
             }
             QPushButton#floatingStart:hover, QPushButton#floatingStop:hover {
                 background: rgba(255, 255, 255, 0.24);
+            }
+            QPushButton#floatingClose {
+                background: transparent;
+                color: rgba(255, 255, 255, 0.55);
+                border: none;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0;
+            }
+            QPushButton#floatingClose:hover {
+                color: #ffffff;
+                background: rgba(255, 255, 255, 0.12);
+                border-radius: 4px;
             }
             QPushButton#floatingStart:disabled, QPushButton#floatingStop:disabled {
                 color: rgba(255, 255, 255, 0.32);
@@ -1793,11 +1841,13 @@ class MainWindow(QMainWindow):
         self.create_dialog.create_requested.connect(self._create_task)
         self._mini_task_id: str | None = None
         self._tray_collapsed = False
+        self._floating_user_dismissed = False
         self._last_tray_activation_at = 0.0
         self.floating = FloatingTimer()
         self.floating.stop_requested.connect(self._floating_stop)
         self.floating.start_requested.connect(self._floating_start)
         self.floating.restore_requested.connect(self._restore_from_tray)
+        self.floating.close_requested.connect(self._floating_close)
         self._load_fonts()
         self._build_ui()
         self._build_menu_bar()
@@ -1809,7 +1859,12 @@ class MainWindow(QMainWindow):
         self.clock_timer.setInterval(1000)
         self.clock_timer.timeout.connect(self._tick)
         self.clock_timer.start()
-        QTimer.singleShot(500, self._show_startup_notices)
+        QTimer.singleShot(0, self._run_deferred_startup_sync)
+
+    def _run_deferred_startup_sync(self) -> None:
+        if self.controller.run_deferred_startup_sync():
+            self.refresh_ui()
+        QTimer.singleShot(300, self._show_startup_notices)
 
     def _show_startup_notices(self) -> None:
         notice = self.controller.webdav_startup_notice
@@ -2165,6 +2220,10 @@ class MainWindow(QMainWindow):
         show_action = QAction("Открыть", self)
         show_action.triggered.connect(self._restore_from_tray)
         tray_menu.addAction(show_action)
+
+        show_widget_action = QAction("Показать виджет", self)
+        show_widget_action.triggered.connect(self._show_floating_from_tray)
+        tray_menu.addAction(show_widget_action)
 
         settings_action = QAction("Настройки…", self)
         settings_action.triggered.connect(self._open_settings)
@@ -2952,7 +3011,11 @@ class MainWindow(QMainWindow):
             return
         self._tray_collapsed = True
         self.hide()
-        task = self._show_floating()
+        task: Task | None
+        if self._floating_user_dismissed:
+            task = self._resolve_floating_task()
+        else:
+            task = self._show_floating()
         self._update_tray_tooltip(floating_task=task)
         if task is not None and task.status == TaskStatus.RUNNING and task.active_session() is not None:
             elapsed = format_duration(task.total_seconds(datetime.now()))
@@ -2967,7 +3030,14 @@ class MainWindow(QMainWindow):
         """Remember which task the tray mini-widget should display."""
         self._mini_task_id = task_id
 
-    def _show_floating(self) -> Task | None:
+    def _show_floating_from_tray(self) -> None:
+        self._floating_user_dismissed = False
+        self._show_floating(force=True)
+
+    def _show_floating(self, *, force: bool = False) -> Task | None:
+        if self._floating_user_dismissed and not force:
+            return self._resolve_floating_task()
+        self._floating_user_dismissed = False
         task = self._resolve_floating_task()
         if task is None:
             self.floating.hide()
@@ -2975,6 +3045,16 @@ class MainWindow(QMainWindow):
         self.floating.show_at_default_corner()
         self._update_floating()
         return task
+
+    def _floating_close(self) -> None:
+        self._floating_user_dismissed = True
+        self.floating.hide()
+        self._show_tray_message(
+            "Виджет скрыт",
+            "Таймер продолжает работать. Откройте приложение или «Показать виджет» из трея.",
+            QSystemTrayIcon.MessageIcon.Information,
+            4000,
+        )
 
     def _update_floating(self) -> None:
         if not self.floating.isVisible():

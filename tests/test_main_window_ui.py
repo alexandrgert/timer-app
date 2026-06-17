@@ -75,7 +75,7 @@ def test_timer_panel_task_prefers_running_over_paused(controller: AppController)
     controller.stop_task(second.id)
     panel = queries.timer_panel_task(controller.state)
     assert panel is not None
-    assert panel.id in {first.id, second.id}
+    assert panel.id == second.id
 
 
 def test_timer_panel_shows_paused_task(
@@ -128,3 +128,23 @@ def test_update_task_row_times_called_from_tick(
     )
     main_window._tick()
     assert calls == [1]
+
+
+def test_floating_close_hides_widget_until_tray_show(
+    main_window: MainWindow, controller: AppController
+) -> None:
+    task = controller.create_task("Tray task", start_now=True)
+    main_window._track_floating_task(task.id)
+    main_window._show_floating()
+    assert main_window.floating.isVisible()
+
+    main_window._floating_close()
+    assert not main_window.floating.isVisible()
+    assert main_window._floating_user_dismissed
+
+    main_window._show_floating()
+    assert not main_window.floating.isVisible()
+
+    main_window._show_floating_from_tray()
+    assert main_window.floating.isVisible()
+    assert not main_window._floating_user_dismissed

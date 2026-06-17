@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from .bitrix_config import BitrixPortalConfig, merge_portal_config
 from .bitrix_secrets import import_webhook_from_ui, load_bitrix_webhook, save_bitrix_webhook
+from .bitrix_transfer_journal import apply_transfer_journal, remove_transfer_result
 from .domain import formatting
 from .domain import plan as plan_domain
 from .domain import queries
@@ -32,7 +33,14 @@ class AppController:
         self._migrate_bitrix_webhook_from_data()
         if plan_domain.migrate_schema_v2(self.state, today=self.today_str()):
             self.save()
-        outcome = sync_webdav_on_startup(storage)
+        self._apply_pending_bitrix_transfers()
+        self._apply_env_bitrix_webhook()
+        self.apply_loaded_state()
+        self.state.ui.setdefault("reminder_interval_minutes", DEFAULT_REMINDER_INTERVAL_MINUTES)
+
+    def run_deferred_startup_sync(self) -> bool:
+        """Pull WebDAV after the UI is shown. Returns True if state changed."""
+        outcome = sync_webdav_on_startup(self.storage)
         if outcome.state is not None:
             self.state = outcome.state
         if outcome.error:
@@ -46,9 +54,15 @@ class AppController:
                 self.webdav_startup_notice = f"{self.webdav_startup_notice}\n{pending_line}"
             else:
                 self.webdav_startup_notice = pending_line
-        self._apply_env_bitrix_webhook()
-        self.apply_loaded_state()
-        self.state.ui.setdefault("reminder_interval_minutes", DEFAULT_REMINDER_INTERVAL_MINUTES)
+        if outcome.state is not None:
+            self.apply_loaded_state()
+            return True
+        return False
+
+    def _apply_pending_bitrix_transfers(self) -> None:
+        applied = apply_transfer_journal(self.storage, self.mark_sessions_transferred)
+        if applied:
+            self.state = self.storage.load()
 
     def reload_state_from_storage(self) -> None:
         self.state = self.storage.load()
@@ -338,6 +352,10 @@ class AppController:
             if session.id in ids:
                 session.bitrix_record_id = str(record_id)
         self.save()
+
+    def finalize_sessions_transfer(self, task_id: str, session_ids, record_id) -> None:
+        """Remove a durable journal entry after the UI applied a transfer."""
+        remove_transfer_result(self.storage, task_id, list(session_ids), str(record_id))
 
     def task_elapsed_text(self, task: Task) -> str:
         return formatting.format_duration(task.total_seconds(datetime.now()))

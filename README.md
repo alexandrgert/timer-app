@@ -104,7 +104,7 @@ pytest
 Готовые сборки — [GitHub Releases](https://github.com/alexandrgert/timer-app/releases).
 **Системные требования:** [`docs/system-requirements.md`](docs/system-requirements.md).
 
-**Последний релиз:** [v0.4.2](https://github.com/alexandrgert/timer-app/releases/tag/v0.4.2) — [текст для пользователей](docs/release-notes-v0.4.2.md)
+**Последний релиз:** [v0.4.4](https://github.com/alexandrgert/timer-app/releases/tag/v0.4.4) — [текст для пользователей](docs/release-notes-v0.4.4.md)
 
 | Платформа | Файл |
 |-----------|------|

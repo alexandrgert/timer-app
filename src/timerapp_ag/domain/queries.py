@@ -31,7 +31,12 @@ def timer_panel_task(state: AppState) -> Task | None:
     ]
     if not paused:
         return None
-    return max(paused, key=lambda task: task.sessions[-1].start_dt)
+    return max(paused, key=_last_pause_dt)
+
+
+def _last_pause_dt(task: Task) -> datetime:
+    session = task.sessions[-1]
+    return session.end_dt or session.start_dt
 
 
 def find_task(state: AppState, task_id: str) -> Task:
