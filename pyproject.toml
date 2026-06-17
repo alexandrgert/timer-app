@@ -16,5 +16,8 @@ dependencies = [
 [project.scripts]
 timerapp = "timerapp_ag.main:main"
 
+[tool.setuptools.package-data]
+timerapp_ag = ["assets/fonts/*.ttf"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

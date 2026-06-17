@@ -207,6 +207,9 @@ class AppController:
     def active_task(self) -> Task | None:
         return queries.active_task(self.state)
 
+    def timer_panel_task(self) -> Task | None:
+        return queries.timer_panel_task(self.state)
+
     def start_task(self, task_id: str) -> Task:
         now = datetime.now()
         task = task_ops.start_task(self.state, task_id, now=now)

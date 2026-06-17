@@ -19,6 +19,21 @@ def active_task(state: AppState) -> Task | None:
     return running[0] if running else None
 
 
+def timer_panel_task(state: AppState) -> Task | None:
+    """Side timer: running task, or the most recently paused one with sessions."""
+    running = active_task(state)
+    if running is not None:
+        return running
+    paused = [
+        task
+        for task in state.tasks
+        if task.status == TaskStatus.PAUSED and task.sessions
+    ]
+    if not paused:
+        return None
+    return max(paused, key=lambda task: task.sessions[-1].start_dt)
+
+
 def find_task(state: AppState, task_id: str) -> Task:
     for task in state.tasks:
         if task.id == task_id:
