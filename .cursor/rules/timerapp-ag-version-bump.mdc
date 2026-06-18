@@ -1,38 +1,38 @@
 ---
-description: TaskTimer — semver в pyproject.toml перед сборкой .deb
-globs: projects/timerapp_ag/**/*
-alwaysApply: false
+description: TaskTimer — semver в pyproject.toml перед любой сборкой (.deb и др.)
+globs: build_deb.sh,build_*.sh,pyproject.toml,scripts/bump_version.py
+alwaysApply: true
 ---
 
-# timerapp_ag: версия и сборка .deb
+# timerapp_ag: версия и сборка
 
 ## Источник версии
 
-Единственный источник — **`projects/timerapp_ag/pyproject.toml`** → `[project].version`.
+Единственный источник — **`pyproject.toml`** → `[project].version`.
 
-Не полагаться на `VERSION=…` для релизов (только для разовых тестов upgrade/downgrade).
+## Обязательный bump при сборке
 
-## Автоподнятие при `./build_deb.sh`
+**Даже при локальной сборке** версию нужно поднимать **минимум на patch** перед `./build_deb.sh` (и аналогами).
 
-Перед сборкой вызывается `scripts/bump_version.py`:
+- Не использовать `NO_BUMP=1` / `ALLOW_NO_BUMP=1`, если пользователь явно не попросил пересборку без смены версии для отладки.
+- По умолчанию: `./build_deb.sh` → `scripts/bump_version.py patch`.
 
 | Тип | Когда | Пример |
 |-----|--------|--------|
-| **`patch`** (по умолчанию) | багфиксы, мелкие правки | 0.2.0 → 0.2.1 |
-| **`minor`** | новые фичи, заметные изменения UX/Б24 | 0.1.0 → 0.2.0 |
-| **`major`** | ломающие изменения формата данных/API | 0.2.3 → 1.0.0 |
+| **`patch`** (по умолчанию) | багфиксы, мелкие правки | 0.4.4 → 0.4.5 |
+| **`minor`** | новые фичи, заметные изменения UX/Б24 | 0.4.5 → 0.5.0 |
+| **`major`** | ломающие изменения формата данных/API | 0.5.0 → 1.0.0 |
 
 ```bash
-# мелкие правки (default)
-./projects/timerapp_ag/build_deb.sh
+# фиксы (default)
+./build_deb.sh
 
 # новые фичи
-BUMP=minor ./projects/timerapp_ag/build_deb.sh
+BUMP=minor ./build_deb.sh
 ```
 
-Без изменения версии (пересборка той же): `NO_BUMP=1 ./build_deb.sh`  
-Фиксированная версия для теста: `NO_BUMP=1 VERSION=0.2.0 ./build_deb.sh`
+`build_deb.sh` по умолчанию сам вызывает bump; `NO_BUMP=1` без `ALLOW_NO_BUMP=1` игнорируется.
 
 ## Агент
 
-После **фич** перед сборкой `.deb` — **`BUMP=minor`**. После **фиксов** — достаточно `./build_deb.sh` (`patch`).
+После **фич** перед сборкой — `BUMP=minor`. После **фиксов** — `./build_deb.sh` (patch). Локальная сборка ≠ исключение из bump.

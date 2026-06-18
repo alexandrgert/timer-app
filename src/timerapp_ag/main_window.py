@@ -110,20 +110,23 @@ def resolve_floating_task(
     active: Task | None,
     tracked_task_id: str | None,
     find_task: Callable[[str], Task],
+    panel_task: Task | None = None,
 ) -> tuple[Task | None, str | None]:
-    """Task for the mini-widget: running, paused, or None if completed / untracked."""
+    """Running/paused task for mini-widget and tray tooltip (active → tracked → panel)."""
     if active is not None:
         return active, active.id
-    if tracked_task_id is None:
-        return None, None
-    try:
-        task = find_task(tracked_task_id)
-    except KeyError:
-        return None, None
-    if task.status == TaskStatus.COMPLETED:
-        return None, None
-    if task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
-        return task, tracked_task_id
+    if tracked_task_id is not None:
+        try:
+            task = find_task(tracked_task_id)
+        except KeyError:
+            task = None
+        else:
+            if task.status == TaskStatus.COMPLETED:
+                pass
+            elif task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+                return task, tracked_task_id
+    if panel_task is not None and panel_task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+        return panel_task, panel_task.id
     return None, None
 
 
@@ -2972,9 +2975,13 @@ class MainWindow(QMainWindow):
     ) -> None:
         if not self.tray_available:
             return
+        window_open = main_window_is_open(
+            is_visible=self.isVisible(),
+            is_minimized=self.isMinimized(),
+        )
         running_titles = [task.title for task in self.controller.running_tasks()]
         display_task: Task | None = None
-        if not self.isVisible():
+        if not window_open:
             if floating_task is _TRAY_TOOLTIP_FLOATING_AUTO:
                 display_task, tracked_id = self._floating_task_state()
                 self._mini_task_id = tracked_id
@@ -2986,7 +2993,7 @@ class MainWindow(QMainWindow):
         )
         self.tray.setToolTip(
             format_tray_tooltip(
-                window_visible=self.isVisible(),
+                window_visible=window_open,
                 app_title=resolve_app_title(),
                 task_titles=task_titles,
             )
@@ -2997,6 +3004,7 @@ class MainWindow(QMainWindow):
             active=self.controller.active_task(),
             tracked_task_id=self._mini_task_id,
             find_task=self.controller.find_task,
+            panel_task=self.controller.timer_panel_task(),
         )
 
     def _resolve_floating_task(self) -> Task | None:
@@ -3049,6 +3057,7 @@ class MainWindow(QMainWindow):
     def _floating_close(self) -> None:
         self._floating_user_dismissed = True
         self.floating.hide()
+        self._update_tray_tooltip()
         self._show_tray_message(
             "Виджет скрыт",
             "Таймер продолжает работать. Откройте приложение или «Показать виджет» из трея.",

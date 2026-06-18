@@ -18,7 +18,7 @@
 
 Спецификация модели «план на день»: [`docs/superpowers/specs/2026-06-11-task-views-and-plan-design.md`](docs/superpowers/specs/2026-06-11-task-views-and-plan-design.md).
 
-Документация: [архитектура](docs/architecture-cross-platform.md) · [схема данных](docs/data-schema.md) · [WebDAV (техн.)](docs/webdav-sync.md) · [системные требования](docs/system-requirements.md) · [релиз 0.4.4](docs/release-notes-v0.4.4.md)
+Документация: [архитектура](docs/architecture-cross-platform.md) · [схема данных](docs/data-schema.md) · [WebDAV (техн.)](docs/webdav-sync.md) · [системные требования](docs/system-requirements.md) · [релиз 0.4.5](docs/release-notes-v0.4.5.md)
 
 ## Быстрый старт
 
@@ -49,7 +49,7 @@ pytest
 
 Минимальные требования для каждой платформы — [`docs/system-requirements.md`](docs/system-requirements.md).
 
-Версия — в **`pyproject.toml`**. При сборке можно автоматически поднять semver (`BUMP=patch|minor|major`) или зафиксировать (`NO_BUMP=1`).
+Версия — в **`pyproject.toml`**. При сборке версия **всегда поднимается минимум на patch** (`BUMP=patch` по умолчанию; для фич — `BUMP=minor`).
 
 ### Windows (`win64.exe`)
 
@@ -71,9 +71,8 @@ pytest
 
 | Команда | Когда |
 |---------|--------|
-| `./build_deb.sh` | мелкие правки → **patch** |
+| `./build_deb.sh` | мелкие правки → **patch** (в т.ч. локальная сборка) |
 | `BUMP=minor ./build_deb.sh` | новые фичи → **minor** |
-| `NO_BUMP=1 ./build_deb.sh` | пересборка без смены версии |
 
 Результат: `dist/tasktimer-link-b24-<версия>-amd64.deb`.
 
@@ -104,20 +103,20 @@ pytest
 Готовые сборки — [GitHub Releases](https://github.com/alexandrgert/timer-app/releases).
 **Системные требования:** [`docs/system-requirements.md`](docs/system-requirements.md).
 
-**Последний релиз:** [v0.4.4](https://github.com/alexandrgert/timer-app/releases/tag/v0.4.4) — [текст для пользователей](docs/release-notes-v0.4.4.md)
+**Последний релиз:** [v0.4.5](https://github.com/alexandrgert/timer-app/releases/tag/v0.4.5) — [текст для пользователей](docs/release-notes-v0.4.5.md)
 
 | Платформа | Файл |
 |-----------|------|
-| Linux amd64 | `tasktimer-link-b24-0.4.4-amd64.deb` |
-| Windows x64 | `tasktimer-link-b24-0.4.4-win64.exe` |
-| macOS | `tasktimer-link-b24-0.4.4-macos-<arch>.zip` |
-| Android | `tasktimer-link-b24-0.4.4-android.apk` |
+| Linux amd64 | `tasktimer-link-b24-0.4.5-amd64.deb` |
+| Windows x64 | `tasktimer-link-b24-0.4.5-win64.exe` |
+| macOS | `tasktimer-link-b24-0.4.5-macos-<arch>.zip` |
+| Android | `tasktimer-link-b24-0.4.5-android.apk` |
 
 Linux:
 
 ```bash
-wget https://github.com/alexandrgert/timer-app/releases/download/v0.4.4/tasktimer-link-b24-0.4.4-amd64.deb
-sudo dpkg -i tasktimer-link-b24-0.4.4-amd64.deb
+wget https://github.com/alexandrgert/timer-app/releases/download/v0.4.5/tasktimer-link-b24-0.4.5-amd64.deb
+sudo dpkg -i tasktimer-link-b24-0.4.5-amd64.deb
 sudo apt-get install -f
 tasktimer-link-b24
 ```

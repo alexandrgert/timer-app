@@ -124,6 +124,51 @@ def test_resolve_floating_task_open_clears_tracking(controller: AppController) -
     assert tracked is None
 
 
+def test_resolve_floating_task_panel_task_when_no_tracking(controller: AppController) -> None:
+    task = controller.create_task("Paused on panel", start_now=True)
+    controller.stop_task(task.id)
+
+    resolved, tracked = resolve_floating_task(
+        active=None,
+        tracked_task_id=None,
+        find_task=controller.find_task,
+        panel_task=controller.timer_panel_task(),
+    )
+    assert resolved is not None
+    assert resolved.id == task.id
+    assert tracked == task.id
+
+
+def test_resolve_floating_task_completed_tracked_falls_back_to_panel(
+    controller: AppController,
+) -> None:
+    done = controller.create_task("Done", start_now=True)
+    controller.complete_task(done.id)
+    paused = controller.create_task("Still paused", start_now=True)
+    controller.stop_task(paused.id)
+
+    resolved, tracked = resolve_floating_task(
+        active=None,
+        tracked_task_id=done.id,
+        find_task=controller.find_task,
+        panel_task=controller.timer_panel_task(),
+    )
+    assert resolved is not None
+    assert resolved.id == paused.id
+    assert tracked == paused.id
+
+
+def test_format_tray_tooltip_minimized_window_shows_tasks() -> None:
+    """Minimized window is not 'open' — tray should list tasks, not app title."""
+    window_open = main_window_is_open(is_visible=True, is_minimized=True)
+    text = format_tray_tooltip(
+        window_visible=window_open,
+        app_title="TaskTimer link B24 0.4.4",
+        task_titles=["Задача A"],
+    )
+    assert text == "Задача A"
+
+
 def test_main_window_is_open() -> None:
     assert main_window_is_open(is_visible=True, is_minimized=False) is True
     assert main_window_is_open(is_visible=True, is_minimized=True) is False
