@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Callable
 from datetime import datetime
 
 from PySide6.QtCore import (
     QDate,
     QDateTime,
-    QEasingCurve,
     QEvent,
-    QPropertyAnimation,
     QStringListModel,
     QThread,
     QTimer,
@@ -24,7 +21,8 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QFontDatabase,
-    QIcon,
+    QFontMetrics,
+    QMouseEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -38,7 +36,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -55,7 +52,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStackedWidget,
     QStyle,
     QSystemTrayIcon,
     QTabWidget,
@@ -65,7 +61,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .bitrix import Bitrix24Client, entity_url, looks_like_webhook, seconds_to_worklog_hours
+from .bitrix import Bitrix24Client, looks_like_webhook, seconds_to_worklog_hours
 from .bitrix_config import BitrixPortalConfig
 from .bitrix_transfer_journal import record_transfer_result
 from .app_info import resolve_app_title
@@ -73,10 +69,236 @@ from .controller import AppController, format_day_label, format_duration, format
 from .models import Task, TaskStatus
 from .runtime_info import build_about_report
 from .webdav_config import WebDavConfig, clear_webdav_pending_notice, load_webdav_config
+from .ui.floating_timer import FloatingTimer
+from .ui.floating_view import FloatingView, resolve_floating_task, resolve_floating_view
+from .ui.task_row import TaskRow
+from .ui.text_layout import (
+    TASK_ROW_ACTIONS_OVERLAY_RESERVE,
+    TASK_ROW_DESC_HORIZONTAL_INSET,
+    TASK_ROW_NAME_MIN_WIDTH,
+    TASK_ROW_PINNED_FOOTER_V_PAD,
+    break_long_unbroken_runs,
+    fit_plain_text_edit_height,
+    fit_wrapped_label_height,
+    wrapped_text_height,
+)
 from .webdav_sync import SyncOutcome, pull_and_merge, push_local, save_webdav_settings, test_webdav_connection
 
 _TRAY_TOOLTIP_FLOATING_AUTO = object()
 TRAY_ACTIVATION_DEBOUNCE_SECONDS = 0.35
+SIDEBAR_WIDTH = 52
+RIGHT_COLUMN_WIDTH = 268
+TASK_LIST_MIN_WIDTH = 600
+WINDOW_MIN_HEIGHT = 680
+WINDOW_VERTICAL_CHROME = 40
+SUMMARY_LABEL_SAMPLE = "За 31.12.2026 всего: 00:00"
+ADD_TASK_BUTTON_EXTRA_WIDTH = 16
+TIMER_DIGITS_FONT_SIZE = 38
+TIMER_DIGITS_VERTICAL_PAD = 6
+TIMER_CARD_HORIZONTAL_INSET = 28
+TIMER_CARD_STATS_SPACING = 14
+SETTINGS_FIELD_MIN_HEIGHT = 36
+SETTINGS_DIALOG_MIN_WIDTH = 520
+SETTINGS_DIALOG_MIN_HEIGHT = 520
+SETTINGS_DIALOG_DEFAULT_WIDTH = 620
+SETTINGS_DIALOG_DEFAULT_HEIGHT = 800
+SETTINGS_DIALOG_CHROME_HEIGHT = 132
+SETTINGS_DIALOG_SCREEN_HEIGHT_RATIO = 0.92
+SETTINGS_DIALOG_HORIZONTAL_INSET = 44
+SETTINGS_CHECKBOX_INDICATOR_WIDTH = 28
+SETTINGS_TAB_CONTENT_WIDTH = SETTINGS_DIALOG_DEFAULT_WIDTH - SETTINGS_DIALOG_HORIZONTAL_INSET
+SETTINGS_TAB_SCROLL_MIN_HEIGHT = 340
+FOCUS_PRESET_BUTTON_HEIGHT = 36
+FOCUS_PRESET_ROW_SPACING = 5
+
+
+def _configure_settings_form_field(field: QLineEdit | QSpinBox) -> None:
+    field.setMinimumHeight(SETTINGS_FIELD_MIN_HEIGHT)
+    field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+
+def _configure_settings_action_button(button: QPushButton) -> None:
+    button.setMinimumHeight(32)
+    button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+
+def _configure_settings_form_layout(form: QFormLayout) -> None:
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+
+def _wrap_settings_tab(tab: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    scroll.setMinimumHeight(SETTINGS_TAB_SCROLL_MIN_HEIGHT)
+    scroll.setWidget(tab)
+    return scroll
+
+
+def _fit_settings_hint_label(label: QLabel, width: int = SETTINGS_TAB_CONTENT_WIDTH) -> None:
+    if not label.text().strip():
+        label.setFixedHeight(0)
+        return
+    label.setMaximumHeight(16777215)
+    fit_wrapped_label_height(label, label.text(), width=width)
+
+
+def _configure_settings_status_label(label: QLabel) -> None:
+    label.setWordWrap(True)
+    if not label.text().strip():
+        label.setFixedHeight(0)
+
+
+def _configure_settings_checkbox(checkbox: QCheckBox) -> None:
+    checkbox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+
+def _settings_checkbox_height(checkbox: QCheckBox, content_width: int) -> int:
+    text_width = max(content_width - SETTINGS_CHECKBOX_INDICATOR_WIDTH, 40)
+    text_height = wrapped_text_height(checkbox.text(), width=text_width, font=checkbox.font())
+    return max(checkbox.sizeHint().height(), text_height + 4)
+
+
+def _prepare_settings_widget_for_measure(widget: QWidget, content_width: int) -> None:
+    if isinstance(widget, QLabel) and widget.wordWrap():
+        _fit_settings_hint_label(widget, content_width)
+    elif isinstance(widget, QCheckBox):
+        widget.setMinimumHeight(_settings_checkbox_height(widget, content_width))
+    child_layout = widget.layout()
+    if child_layout is not None:
+        _prepare_settings_layout_for_measure(child_layout, content_width)
+
+
+def _prepare_settings_layout_for_measure(
+    layout: QFormLayout | QHBoxLayout | QVBoxLayout,
+    content_width: int,
+) -> None:
+    if isinstance(layout, QFormLayout):
+        for row in range(layout.rowCount()):
+            for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.FieldRole):
+                item = layout.itemAt(row, role)
+                if item is None or item.widget() is None:
+                    continue
+                _prepare_settings_widget_for_measure(item.widget(), content_width)
+        return
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item.widget() is not None:
+            _prepare_settings_widget_for_measure(item.widget(), content_width)
+        elif item.layout() is not None:
+            _prepare_settings_layout_for_measure(item.layout(), content_width)
+
+
+def _prepare_settings_tab_for_measure(inner: QWidget, content_width: int) -> None:
+    inner.setMinimumWidth(content_width)
+    inner.setMaximumWidth(content_width)
+    root_layout = inner.layout()
+    if root_layout is not None:
+        _prepare_settings_layout_for_measure(root_layout, content_width)
+
+
+def _settings_form_layout_height(form: QFormLayout) -> int:
+    hinted = form.sizeHint().height()
+    if hinted > 0:
+        return hinted
+    if form.rowCount() == 0:
+        return 0
+    height = form.contentsMargins().top() + form.contentsMargins().bottom()
+    for row in range(form.rowCount()):
+        row_height = 0
+        has_field = False
+        for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.FieldRole):
+            item = form.itemAt(row, role)
+            if item is None or item.widget() is None:
+                continue
+            if role == QFormLayout.ItemRole.FieldRole:
+                has_field = True
+            row_height = max(row_height, item.widget().sizeHint().height())
+        if has_field:
+            row_height = max(row_height, SETTINGS_FIELD_MIN_HEIGHT)
+        height += row_height
+        if row < form.rowCount() - 1:
+            height += form.spacing()
+    return height
+
+
+def _settings_box_layout_height(box: QHBoxLayout | QVBoxLayout) -> int:
+    height = box.contentsMargins().top() + box.contentsMargins().bottom()
+    item_height = 0
+    for index in range(box.count()):
+        item = box.itemAt(index)
+        if item.widget() is not None:
+            item_height = max(item_height, item.widget().sizeHint().height())
+        elif item.layout() is not None:
+            item_height = max(item_height, _settings_layout_total_height(item.layout()))
+    return height + item_height
+
+
+def _settings_layout_total_height(
+    layout: QFormLayout | QHBoxLayout | QVBoxLayout,
+) -> int:
+    if isinstance(layout, QFormLayout):
+        return _settings_form_layout_height(layout)
+    if isinstance(layout, QHBoxLayout):
+        return _settings_box_layout_height(layout)
+    height = layout.contentsMargins().top() + layout.contentsMargins().bottom()
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item.spacerItem() is not None:
+            continue
+        if item.widget() is not None:
+            height += item.widget().sizeHint().height()
+        elif item.layout() is not None:
+            height += _settings_layout_total_height(item.layout())
+        if index < layout.count() - 1:
+            height += layout.spacing()
+    return height
+
+
+def _settings_dialog_content_width(dialog_width: int) -> int:
+    return max(
+        dialog_width - SETTINGS_DIALOG_HORIZONTAL_INSET,
+        SETTINGS_DIALOG_MIN_WIDTH - SETTINGS_DIALOG_HORIZONTAL_INSET,
+    )
+
+
+def _settings_tab_content_width(
+    scroll: QScrollArea,
+    *,
+    dialog_width: int | None = None,
+) -> int:
+    viewport_width = scroll.viewport().width()
+    if viewport_width > 0:
+        return viewport_width
+    if dialog_width is not None and dialog_width > 0:
+        return _settings_dialog_content_width(dialog_width)
+    return SETTINGS_TAB_CONTENT_WIDTH
+
+
+def _measure_settings_tab_content_height(scroll: QScrollArea, content_width: int) -> int:
+    inner = scroll.widget()
+    if inner is None:
+        return 0
+    layout = inner.layout()
+    if layout is None:
+        return inner.sizeHint().height()
+    _prepare_settings_tab_for_measure(inner, content_width)
+    layout.invalidate()
+    layout.activate()
+    layout_hint = layout.sizeHint().height()
+    height_for_width = inner.heightForWidth(content_width)
+    measured = _settings_layout_total_height(layout)
+    height = max(measured, layout_hint)
+    if height_for_width > 0:
+        height = max(height, height_for_width)
+    inner.setMinimumHeight(height)
+    inner.setMaximumWidth(16777215)
+    inner.setMinimumWidth(0)
+    return height
 
 
 def format_tray_tooltip(
@@ -97,37 +319,15 @@ def tray_tooltip_task_titles(
     *,
     running_task_titles: list[str],
     floating_task: Task | None,
+    focus_line: str | None = None,
 ) -> list[str]:
-    """Running tasks plus paused mini-widget task (without duplicates)."""
+    """Running tasks, active focus, and paused mini-widget task (without duplicates)."""
     titles = list(running_task_titles)
+    if focus_line and focus_line not in titles:
+        titles.insert(0, focus_line)
     if floating_task is not None and floating_task.title not in titles:
         titles.append(floating_task.title)
     return titles
-
-
-def resolve_floating_task(
-    *,
-    active: Task | None,
-    tracked_task_id: str | None,
-    find_task: Callable[[str], Task],
-    panel_task: Task | None = None,
-) -> tuple[Task | None, str | None]:
-    """Running/paused task for mini-widget and tray tooltip (active → tracked → panel)."""
-    if active is not None:
-        return active, active.id
-    if tracked_task_id is not None:
-        try:
-            task = find_task(tracked_task_id)
-        except KeyError:
-            task = None
-        else:
-            if task.status == TaskStatus.COMPLETED:
-                pass
-            elif task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
-                return task, tracked_task_id
-    if panel_task is not None and panel_task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
-        return panel_task, panel_task.id
-    return None, None
 
 
 def main_window_is_open(*, is_visible: bool, is_minimized: bool) -> bool:
@@ -146,15 +346,6 @@ def tray_activation_is_debounced(
 def bitrix_client(controller: AppController, webhook: str | None = None) -> Bitrix24Client:
     url = (webhook or controller.bitrix_webhook()).strip()
     return Bitrix24Client(url, portal_config=controller.bitrix_portal_config())
-
-
-def bitrix_entity_url(controller: AppController, link: dict | None) -> str | None:
-    config = controller.bitrix_portal_config()
-    return entity_url(
-        controller.bitrix_webhook(),
-        link,
-        projects_entity_type_id=config.projects_entity_type_id,
-    )
 
 
 class CreateTaskCard(QFrame):
@@ -443,68 +634,6 @@ def _check_icon_path() -> str:
     return path
 
 
-_ICON_CACHE: dict[str, QIcon] = {}
-
-
-def _line_icon(key: str, draw, color: str = "#828B9A") -> QIcon:
-    """Build (and cache) a crisp line-art QIcon drawn by ``draw(painter)``."""
-    cache_key = f"{key}:{color}"
-    if cache_key in _ICON_CACHE:
-        return _ICON_CACHE[cache_key]
-
-    from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
-
-    scale = 4
-    pixmap = QPixmap(16 * scale, 16 * scale)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.scale(scale, scale)
-    pen = QPen(QColor(color))
-    pen.setWidthF(1.3)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    draw(painter)
-    painter.end()
-
-    icon = QIcon(pixmap)
-    _ICON_CACHE[cache_key] = icon
-    return icon
-
-
-def _draw_trash(painter) -> None:
-    from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QPainterPath
-
-    painter.drawLine(QPointF(3, 4.6), QPointF(13, 4.6))
-    handle = QPainterPath()
-    handle.moveTo(6, 4.6)
-    handle.lineTo(6, 3.3)
-    handle.quadTo(6, 2.7, 6.6, 2.7)
-    handle.lineTo(9.4, 2.7)
-    handle.quadTo(10, 2.7, 10, 3.3)
-    handle.lineTo(10, 4.6)
-    painter.drawPath(handle)
-    body = QPainterPath()
-    body.moveTo(4.4, 4.6)
-    body.lineTo(5.1, 13.2)
-    body.lineTo(10.9, 13.2)
-    body.lineTo(11.6, 4.6)
-    painter.drawPath(body)
-
-
-def _draw_stopwatch(painter) -> None:
-    from PySide6.QtCore import QPointF, QRectF
-
-    painter.drawEllipse(QRectF(3, 4.7, 10, 10))
-    painter.drawLine(QPointF(8, 9.7), QPointF(8, 6.8))
-    painter.drawLine(QPointF(8, 9.7), QPointF(10.1, 10.5))
-    painter.drawLine(QPointF(8, 2.3), QPointF(8, 3.9))
-    painter.drawLine(QPointF(6, 2.3), QPointF(10, 2.3))
-
-
 class _CallableThread(QThread):
     """Runs a callable off the UI thread and reports the outcome via signals."""
 
@@ -558,7 +687,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.controller = controller
         self.setWindowTitle("Настройки")
-        self.resize(620, 540)
+        self.resize(SETTINGS_DIALOG_DEFAULT_WIDTH, SETTINGS_DIALOG_DEFAULT_HEIGHT)
         self._test_thread: _CallableThread | None = None
         self._discover_thread: _CallableThread | None = None
         self._webdav_test_thread: _CallableThread | None = None
@@ -584,18 +713,22 @@ class SettingsDialog(QDialog):
         )
         hint.setWordWrap(True)
         general_layout.addWidget(hint)
+        _fit_settings_hint_label(hint)
 
         form = QFormLayout()
+        _configure_settings_form_layout(form)
         self.reminder_spin = QSpinBox()
         self.reminder_spin.setRange(1, 24 * 60)
         self.reminder_spin.setSuffix(" мин")
         self.reminder_spin.setValue(controller.reminder_interval_minutes())
+        _configure_settings_form_field(self.reminder_spin)
         form.addRow("Интервал напоминания", self.reminder_spin)
 
         self.webhook_edit = QLineEdit()
         self.webhook_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.webhook_edit.setPlaceholderText("https://портал.bitrix24.ru/rest/1/токен/")
         self.webhook_edit.setText(controller.bitrix_webhook())
+        _configure_settings_form_field(self.webhook_edit)
         form.addRow("URL вебхука Битрикс24", self.webhook_edit)
 
         webhook_hint = QLabel(
@@ -603,20 +736,19 @@ class SettingsDialog(QDialog):
         )
         webhook_hint.setWordWrap(True)
         general_layout.addWidget(webhook_hint)
+        _fit_settings_hint_label(webhook_hint)
         general_layout.addLayout(form)
 
-        webhook_controls = QHBoxLayout()
         self.show_webhook_checkbox = QCheckBox("Показать")
         self.show_webhook_checkbox.toggled.connect(self._toggle_webhook_echo)
-        webhook_controls.addWidget(self.show_webhook_checkbox)
-        webhook_controls.addStretch(1)
+        general_layout.addWidget(self.show_webhook_checkbox)
         self.test_button = QPushButton("Проверить соединение")
         self.test_button.clicked.connect(self._test_connection)
-        webhook_controls.addWidget(self.test_button)
-        general_layout.addLayout(webhook_controls)
+        _configure_settings_action_button(self.test_button)
+        general_layout.addWidget(self.test_button)
 
         self.webhook_status = QLabel("")
-        self.webhook_status.setWordWrap(True)
+        _configure_settings_status_label(self.webhook_status)
         general_layout.addWidget(self.webhook_status)
 
         portal_hint = QLabel(
@@ -625,35 +757,38 @@ class SettingsDialog(QDialog):
         )
         portal_hint.setWordWrap(True)
         general_layout.addWidget(portal_hint)
+        _fit_settings_hint_label(portal_hint)
 
         portal_form = QFormLayout()
+        _configure_settings_form_layout(portal_form)
         self.registry_title_edit = QLineEdit()
         self.registry_title_edit.setText(portal.projects_registry_title)
+        _configure_settings_form_field(self.registry_title_edit)
         portal_form.addRow("Название СПА проектов", self.registry_title_edit)
 
         self.entity_type_spin = QSpinBox()
         self.entity_type_spin.setRange(1, 9999)
         self.entity_type_spin.setValue(portal.projects_entity_type_id)
+        _configure_settings_form_field(self.entity_type_spin)
         portal_form.addRow("entityTypeId СПА", self.entity_type_spin)
 
         self.executor_fields_edit = QLineEdit()
         self.executor_fields_edit.setPlaceholderText("ufCrm16MainIspolnitel, ufCrm16Supporters")
         self.executor_fields_edit.setText(", ".join(portal.projects_executor_fields))
+        _configure_settings_form_field(self.executor_fields_edit)
         portal_form.addRow("Поля фильтра (через запятую)", self.executor_fields_edit)
         general_layout.addLayout(portal_form)
 
-        discover_row = QHBoxLayout()
-        discover_row.addStretch(1)
         self.discover_button = QPushButton("Определить с портала")
         self.discover_button.clicked.connect(self._discover_portal)
-        discover_row.addWidget(self.discover_button)
-        general_layout.addLayout(discover_row)
+        _configure_settings_action_button(self.discover_button)
+        general_layout.addWidget(self.discover_button)
 
         self.portal_status = QLabel("")
-        self.portal_status.setWordWrap(True)
+        _configure_settings_status_label(self.portal_status)
         general_layout.addWidget(self.portal_status)
         general_layout.addStretch(1)
-        tabs.addTab(general_tab, "Битрикс24")
+        tabs.addTab(_wrap_settings_tab(general_tab), "Битрикс24")
 
         webdav_tab = QWidget()
         webdav_layout = QVBoxLayout(webdav_tab)
@@ -666,29 +801,35 @@ class SettingsDialog(QDialog):
         )
         webdav_hint.setWordWrap(True)
         webdav_layout.addWidget(webdav_hint)
+        _fit_settings_hint_label(webdav_hint)
 
         self.webdav_enabled_checkbox = QCheckBox("Включить синхронизацию WebDAV")
         self.webdav_enabled_checkbox.setChecked(webdav.enabled)
         webdav_layout.addWidget(self.webdav_enabled_checkbox)
 
         webdav_form = QFormLayout()
+        _configure_settings_form_layout(webdav_form)
         self.webdav_url_edit = QLineEdit()
         self.webdav_url_edit.setPlaceholderText("https://cloud.example.com/remote.php/dav/files/user/")
         self.webdav_url_edit.setText(webdav.url)
+        _configure_settings_form_field(self.webdav_url_edit)
         webdav_form.addRow("URL WebDAV", self.webdav_url_edit)
 
         self.webdav_username_edit = QLineEdit()
         self.webdav_username_edit.setText(webdav.username)
+        _configure_settings_form_field(self.webdav_username_edit)
         webdav_form.addRow("Имя пользователя", self.webdav_username_edit)
 
         self.webdav_password_edit = QLineEdit()
         self.webdav_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.webdav_password_edit.setText(webdav.password)
+        _configure_settings_form_field(self.webdav_password_edit)
         webdav_form.addRow("Пароль", self.webdav_password_edit)
 
         self.webdav_remote_path_edit = QLineEdit()
         self.webdav_remote_path_edit.setPlaceholderText("tasktimer/data.json")
         self.webdav_remote_path_edit.setText(webdav.remote_path)
+        _configure_settings_form_field(self.webdav_remote_path_edit)
         webdav_form.addRow("Путь к файлу на сервере", self.webdav_remote_path_edit)
         webdav_layout.addLayout(webdav_form)
 
@@ -704,6 +845,7 @@ class SettingsDialog(QDialog):
             "При выходе только отправить локальную копию (без слияния с облаком)"
         )
         self.webdav_shutdown_upload_only_checkbox.setChecked(webdav.shutdown_upload_only)
+        _configure_settings_checkbox(self.webdav_shutdown_upload_only_checkbox)
         webdav_layout.addWidget(self.webdav_shutdown_upload_only_checkbox)
 
         upload_only_hint = QLabel(
@@ -712,25 +854,27 @@ class SettingsDialog(QDialog):
         )
         upload_only_hint.setWordWrap(True)
         webdav_layout.addWidget(upload_only_hint)
+        _fit_settings_hint_label(upload_only_hint)
 
-        webdav_controls = QHBoxLayout()
-        webdav_controls.addStretch(1)
         self.webdav_test_button = QPushButton("Проверить WebDAV")
         self.webdav_test_button.clicked.connect(self._test_webdav)
-        webdav_controls.addWidget(self.webdav_test_button)
+        _configure_settings_action_button(self.webdav_test_button)
+        webdav_layout.addWidget(self.webdav_test_button)
         self.webdav_pull_button = QPushButton("Скачать и объединить")
         self.webdav_pull_button.clicked.connect(self._webdav_pull_now)
-        webdav_controls.addWidget(self.webdav_pull_button)
+        _configure_settings_action_button(self.webdav_pull_button)
+        webdav_layout.addWidget(self.webdav_pull_button)
         self.webdav_push_button = QPushButton("Загрузить сейчас")
         self.webdav_push_button.clicked.connect(self._webdav_push_now)
-        webdav_controls.addWidget(self.webdav_push_button)
-        webdav_layout.addLayout(webdav_controls)
+        _configure_settings_action_button(self.webdav_push_button)
+        webdav_layout.addWidget(self.webdav_push_button)
 
         self.webdav_status = QLabel(self._webdav_status_text(webdav))
-        self.webdav_status.setWordWrap(True)
+        _configure_settings_status_label(self.webdav_status)
         webdav_layout.addWidget(self.webdav_status)
+        _fit_settings_hint_label(self.webdav_status)
         webdav_layout.addStretch(1)
-        tabs.addTab(webdav_tab, "WebDAV")
+        tabs.addTab(_wrap_settings_tab(webdav_tab), "WebDAV")
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -738,6 +882,102 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        self._settings_tabs = tabs
+        self._settings_buttons = buttons
+        self._settings_layout_sync_width = -1
+        tabs.currentChanged.connect(lambda _index: self._sync_settings_tabs_layout())
+        self.setMinimumWidth(SETTINGS_DIALOG_MIN_WIDTH)
+        self._apply_settings_dialog_height()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._settings_layout_sync_width = -1
+        self._sync_settings_tabs_layout()
+        self._settings_layout_sync_width = self.width()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        width_changed = event.size().width() != self._settings_layout_sync_width
+        if width_changed:
+            self._settings_layout_sync_width = event.size().width()
+        if width_changed or self.height() < self.minimumHeight():
+            self._sync_settings_tabs_layout()
+
+    def _settings_status_label_width(self) -> int:
+        current = self._settings_tabs.currentWidget()
+        if isinstance(current, QScrollArea):
+            return _settings_tab_content_width(current, dialog_width=self.width())
+        return _settings_dialog_content_width(self.width())
+
+    def _settings_dialog_chrome_height(self) -> int:
+        if self.isVisible() and self.height() > 0:
+            current = self._settings_tabs.currentWidget()
+            if isinstance(current, QScrollArea) and current.height() > 0:
+                measured = self.height() - current.height()
+                if measured > 0:
+                    return measured
+
+        root_layout = self.layout()
+        if root_layout is None:
+            return SETTINGS_DIALOG_CHROME_HEIGHT
+        margins = root_layout.contentsMargins().top() + root_layout.contentsMargins().bottom()
+        tab_bar_height = self._settings_tabs.tabBar().sizeHint().height()
+        buttons_height = self._settings_buttons.sizeHint().height()
+        spacing = root_layout.spacing() * max(0, root_layout.count() - 1)
+        estimated = margins + tab_bar_height + buttons_height + spacing
+        return max(estimated, SETTINGS_DIALOG_CHROME_HEIGHT)
+
+    def _cap_settings_dialog_height(self, ideal_height: int) -> int:
+        capped = max(SETTINGS_DIALOG_MIN_HEIGHT, ideal_height)
+        screen = self.screen()
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return capped
+        available_height = screen.availableGeometry().height()
+        screen_cap = min(
+            int(available_height * SETTINGS_DIALOG_SCREEN_HEIGHT_RATIO),
+            available_height,
+        )
+        if capped <= screen_cap:
+            return capped
+        return max(screen_cap, min(available_height, SETTINGS_DIALOG_MIN_HEIGHT))
+
+    def _measure_all_settings_tab_heights(self) -> list[int]:
+        content_heights: list[int] = []
+        for index in range(self._settings_tabs.count()):
+            scroll = self._settings_tabs.widget(index)
+            if not isinstance(scroll, QScrollArea):
+                continue
+            content_width = _settings_tab_content_width(
+                scroll,
+                dialog_width=self.width(),
+            )
+            content_heights.append(
+                _measure_settings_tab_content_height(scroll, content_width)
+            )
+        return content_heights
+
+    def _effective_settings_dialog_height(self, max_content_height: int) -> int:
+        ideal_height = max_content_height + self._settings_dialog_chrome_height()
+        return self._cap_settings_dialog_height(ideal_height)
+
+    def _sync_settings_tabs_layout(self) -> None:
+        content_heights = self._measure_all_settings_tab_heights()
+        max_content = max(content_heights) if content_heights else 0
+        min_height = self._effective_settings_dialog_height(max_content)
+        if self.minimumHeight() != min_height:
+            self.setMinimumHeight(min_height)
+        if self.isVisible() and self.height() < min_height:
+            self.resize(self.width(), min_height)
+
+    def _apply_settings_dialog_height(self) -> None:
+        self._sync_settings_tabs_layout()
+        self.resize(
+            max(self.width(), SETTINGS_DIALOG_DEFAULT_WIDTH),
+            max(self.height(), SETTINGS_DIALOG_DEFAULT_HEIGHT, self.minimumHeight()),
+        )
 
     def _toggle_webhook_echo(self, shown: bool) -> None:
         self.webhook_edit.setEchoMode(
@@ -851,6 +1091,8 @@ class SettingsDialog(QDialog):
         color = {True: "#2d6b40", False: "#9b3c3c", None: "#5f6b7c"}[ok]
         self.webdav_status.setText(text)
         self.webdav_status.setStyleSheet(f"color: {color}; background: transparent;")
+        _fit_settings_hint_label(self.webdav_status, self._settings_status_label_width())
+        self._sync_settings_tabs_layout()
 
     def _test_webdav(self) -> None:
         config = self.webdav_config()
@@ -930,7 +1172,9 @@ class SettingsDialog(QDialog):
 
     def _on_webdav_sync_finished(self) -> None:
         self._set_webdav_buttons_enabled(True)
-        self.webdav_status.setText(self._webdav_status_text(load_webdav_config()))
+        config = load_webdav_config()
+        status_ok: bool | None = False if config.last_error else None
+        self._set_webdav_status(self._webdav_status_text(config), ok=status_ok)
 
     def _set_webdav_buttons_enabled(self, enabled: bool) -> None:
         self.webdav_test_button.setEnabled(enabled)
@@ -941,11 +1185,15 @@ class SettingsDialog(QDialog):
         color = {True: "#2d6b40", False: "#9b3c3c", None: "#5f6b7c"}[ok]
         self.webhook_status.setText(text)
         self.webhook_status.setStyleSheet(f"color: {color}; background: transparent;")
+        _fit_settings_hint_label(self.webhook_status, self._settings_status_label_width())
+        self._sync_settings_tabs_layout()
 
     def _set_portal_status(self, text: str, ok: bool | None) -> None:
         color = {True: "#2d6b40", False: "#9b3c3c", None: "#5f6b7c"}[ok]
         self.portal_status.setText(text)
         self.portal_status.setStyleSheet(f"color: {color}; background: transparent;")
+        _fit_settings_hint_label(self.portal_status, self._settings_status_label_width())
+        self._sync_settings_tabs_layout()
 
     def _await_worker_threads(self) -> None:
         for thread in (
@@ -992,7 +1240,9 @@ class TaskEditDialog(QDialog):
         self.description_edit = QPlainTextEdit()
         self.description_edit.setPlaceholderText("Описание (необязательно)")
         self.description_edit.setPlainText(task.description)
-        self.description_edit.setFixedHeight(90)
+        self.description_edit.document().contentsChanged.connect(
+            lambda: fit_plain_text_edit_height(self.description_edit)
+        )
         form.addRow("Описание", self.description_edit)
         layout.addLayout(form)
 
@@ -1002,6 +1252,14 @@ class TaskEditDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        fit_plain_text_edit_height(self.description_edit)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        fit_plain_text_edit_height(self.description_edit)
 
     def accept(self) -> None:
         title = self.title_edit.text().strip()
@@ -1361,382 +1619,6 @@ class SessionEditDialog(QDialog):
         QMessageBox.warning(self, "Битрикс24", f"Не удалось передать время: {message}")
 
 
-_STATUS_PROP = {
-    TaskStatus.RUNNING: "running",
-    TaskStatus.PAUSED: "paused",
-    TaskStatus.COMPLETED: "done",
-    TaskStatus.OPEN: "todo",
-}
-
-
-class TaskRow(QFrame):
-    """Compact single-line task row (Bitrix24 style, 48px tall)."""
-
-    start_requested = Signal(str)
-    stop_requested = Signal(str)
-    complete_requested = Signal(str)
-    resume_requested = Signal(str)
-    history_requested = Signal(str)
-    edit_requested = Signal(str)
-    delete_requested = Signal(str)
-    plan_toggle_requested = Signal(str)
-
-    def __init__(
-        self, controller: AppController, task: Task, reference_date: str | None = None
-    ) -> None:
-        super().__init__()
-        self.setObjectName("taskRow")
-        self.setFixedHeight(48)
-        self._title = task.title
-        self._is_running = task.status == TaskStatus.RUNNING
-        status = _STATUS_PROP.get(task.status, "todo")
-        self.setProperty("status", status)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(13, 0, 12, 0)
-        layout.setSpacing(10)
-
-        dot = QFrame()
-        dot.setObjectName("taskDot")
-        dot.setProperty("status", status)
-        dot.setFixedSize(8, 8)
-        layout.addWidget(dot)
-
-        self._name_label = QLabel(task.title)
-        self._name_label.setObjectName("taskName")
-        self._name_label.setToolTip(task.title)
-        self._name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._name_label, 1)
-
-        reference = reference_date or controller.today_str()
-        is_today = reference == controller.today_str()
-        times = QHBoxLayout()
-        times.setSpacing(4)
-        today_label = QLabel("сег." if is_today else format_day_label(reference))
-        today_label.setObjectName("rowTimeLbl")
-        times.addWidget(today_label)
-        today_value = QLabel(format_hm(controller.today_seconds(task, reference)))
-        today_value.setObjectName("rowTimeVal")
-        today_value.setProperty("live", self._is_running)
-        self._today_value = today_value
-        times.addWidget(today_value)
-        sep = QLabel("·")
-        sep.setObjectName("rowTimeSep")
-        times.addWidget(sep)
-        total_label = QLabel("всего")
-        total_label.setObjectName("rowTimeLbl")
-        times.addWidget(total_label)
-        total_value = QLabel(format_hm(task.total_seconds(datetime.now())))
-        total_value.setObjectName("rowTimeVal")
-        self._total_value = total_value
-        times.addWidget(total_value)
-        layout.addLayout(times)
-
-        self._actions = QWidget()
-        self._actions.setObjectName("rowActions")
-        actions = QHBoxLayout(self._actions)
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(4)
-
-        fade = QFrame()
-        fade.setObjectName("rowActionsFade")
-        fade.setFixedWidth(26)
-        actions.addWidget(fade)
-
-        is_done = task.status == TaskStatus.COMPLETED
-
-        edit_button = QPushButton("Изменить")
-        edit_button.setObjectName("linkAction")
-        edit_button.setToolTip("Изменить название и описание")
-        edit_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        edit_button.clicked.connect(lambda: self.edit_requested.emit(task.id))
-        actions.addWidget(edit_button)
-
-        if not is_done:
-            history_button = QPushButton()
-            history_button.setObjectName("iconAction")
-            history_button.setFixedSize(26, 26)
-            history_button.setIcon(_line_icon("stopwatch", _draw_stopwatch))
-            history_button.setToolTip("История сессий")
-            history_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            history_button.clicked.connect(lambda: self.history_requested.emit(task.id))
-            actions.addWidget(history_button)
-
-            portal_url = bitrix_entity_url(controller, task.bitrix)
-            if portal_url:
-                open_button = QPushButton("Открыть в Б24")
-                open_button.setObjectName("linkAction")
-                open_button.setToolTip("Открыть сущность в Битрикс24")
-                open_button.setCursor(Qt.CursorShape.PointingHandCursor)
-                open_button.clicked.connect(
-                    lambda checked=False, url=portal_url: QDesktopServices.openUrl(QUrl(url))
-                )
-                actions.addWidget(open_button)
-
-            complete_button = QPushButton("Завершить")
-            complete_button.setObjectName("linkAction")
-            complete_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            complete_button.clicked.connect(lambda: self.complete_requested.emit(task.id))
-            actions.addWidget(complete_button)
-
-        in_plan = controller.in_today_plan(task)
-        plan_button = QPushButton("Из плана" if in_plan else "В план")
-        plan_button.setObjectName("linkAction")
-        plan_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        plan_button.clicked.connect(lambda: self.plan_toggle_requested.emit(task.id))
-        actions.addWidget(plan_button)
-
-        delete_button = QPushButton()
-        delete_button.setObjectName("iconActionDanger")
-        delete_button.setFixedSize(26, 26)
-        delete_button.setIcon(_line_icon("trash", _draw_trash))
-        delete_button.setToolTip("Удалить задачу")
-        delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_button.clicked.connect(lambda: self.delete_requested.emit(task.id))
-        actions.addWidget(delete_button)
-
-        if is_done:
-            resume_button = QPushButton("Возобновить")
-            resume_button.setObjectName("rowResume")
-            resume_button.setFixedHeight(26)
-            resume_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            resume_button.clicked.connect(lambda: self.resume_requested.emit(task.id))
-            actions.addWidget(resume_button)
-        elif self._is_running:
-            stop_button = QPushButton("Стоп")
-            stop_button.setObjectName("rowStop")
-            stop_button.setFixedHeight(26)
-            stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            stop_button.clicked.connect(lambda: self.stop_requested.emit(task.id))
-            actions.addWidget(stop_button)
-        else:
-            start_button = QPushButton("Старт")
-            start_button.setObjectName("rowStart")
-            start_button.setFixedHeight(26)
-            start_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            start_button.clicked.connect(lambda: self.start_requested.emit(task.id))
-            actions.addWidget(start_button)
-
-        layout.addWidget(self._actions)
-
-        self._fade_effect = QGraphicsOpacityEffect(self._actions)
-        self._fade_effect.setOpacity(1.0 if self._is_running else 0.0)
-        self._actions.setGraphicsEffect(self._fade_effect)
-        self._actions.setEnabled(self._is_running)
-        self._fade_anim = QPropertyAnimation(self._fade_effect, b"opacity", self)
-        self._fade_anim.setDuration(150)
-        self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        self._fade_anim.finished.connect(self._on_fade_finished)
-
-    def update_times(
-        self, controller: AppController, task: Task, reference_date: str | None = None
-    ) -> None:
-        """Refresh displayed durations without rebuilding the row."""
-        reference = reference_date or controller.today_str()
-        now = datetime.now()
-        is_running = task.status == TaskStatus.RUNNING
-        if is_running != self._is_running:
-            self._is_running = is_running
-            self._today_value.setProperty("live", is_running)
-            self._today_value.style().unpolish(self._today_value)
-            self._today_value.style().polish(self._today_value)
-        self._today_value.setText(format_hm(controller.today_seconds(task, reference)))
-        self._total_value.setText(format_hm(task.total_seconds(now)))
-
-    def _animate_actions(self, target: float) -> None:
-        self._fade_anim.stop()
-        self._fade_anim.setStartValue(self._fade_effect.opacity())
-        self._fade_anim.setEndValue(target)
-        self._fade_anim.start()
-
-    def _on_fade_finished(self) -> None:
-        if self._fade_effect.opacity() <= 0.01:
-            self._actions.setEnabled(False)
-
-    def enterEvent(self, event) -> None:
-        self._actions.setEnabled(True)
-        self._animate_actions(1.0)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        if not self._is_running:
-            self._animate_actions(0.0)
-        super().leaveEvent(event)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        width = self._name_label.width()
-        if width <= 0:
-            return
-        metrics = self._name_label.fontMetrics()
-        elided = metrics.elidedText(self._title, Qt.TextElideMode.ElideRight, width)
-        self._name_label.setText(elided)
-
-
-class FloatingTimer(QWidget):
-    """Small always-on-top widget shown in the tray for the current or last task."""
-
-    stop_requested = Signal()
-    start_requested = Signal()
-    restore_requested = Signal()
-    close_requested = Signal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setWindowOpacity(0.9)
-        self._drag_offset = None
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-
-        card = QFrame()
-        card.setObjectName("floatingCard")
-        outer.addWidget(card)
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 10, 14, 12)
-        layout.setSpacing(6)
-
-        header = QHBoxLayout()
-        header.setSpacing(8)
-
-        self.name_label = QLabel("Задача")
-        self.name_label.setObjectName("floatingName")
-        header.addWidget(self.name_label, 1)
-
-        self.close_button = QPushButton("✕")
-        self.close_button.setObjectName("floatingClose")
-        self.close_button.setFixedSize(20, 20)
-        self.close_button.setToolTip("Скрыть виджет (таймер продолжит работать)")
-        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_button.clicked.connect(self.close_requested.emit)
-        header.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
-
-        layout.addLayout(header)
-
-        bottom = QHBoxLayout()
-        bottom.setSpacing(8)
-
-        self.time_label = QLabel("00:00:00")
-        self.time_label.setObjectName("floatingTime")
-        bottom.addWidget(self.time_label)
-        bottom.addStretch(1)
-
-        self.start_button = QPushButton("▶")
-        self.start_button.setObjectName("floatingStart")
-        self.start_button.setFixedSize(30, 26)
-        self.start_button.setToolTip("Старт")
-        self.start_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.start_button.clicked.connect(self.start_requested.emit)
-        bottom.addWidget(self.start_button)
-
-        self.stop_button = QPushButton("⏸")
-        self.stop_button.setObjectName("floatingStop")
-        self.stop_button.setFixedSize(30, 26)
-        self.stop_button.setToolTip("Стоп")
-        self.stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_button.clicked.connect(self.stop_requested.emit)
-        bottom.addWidget(self.stop_button)
-
-        layout.addLayout(bottom)
-
-        self.setFixedWidth(232)
-        self.setStyleSheet(
-            """
-            QFrame#floatingCard {
-                background: rgba(18, 20, 25, 0.88);
-                border: 1px solid rgba(255, 255, 255, 0.16);
-                border-radius: 16px;
-            }
-            QLabel#floatingName {
-                background: transparent;
-                color: rgba(255, 255, 255, 0.82);
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QLabel#floatingTime {
-                background: transparent;
-                color: #ffffff;
-                font-size: 22px;
-                font-weight: 800;
-                letter-spacing: 1px;
-            }
-            QPushButton#floatingStart, QPushButton#floatingStop {
-                background: rgba(255, 255, 255, 0.12);
-                color: white;
-                border: 1px solid rgba(255, 255, 255, 0.18);
-                border-radius: 8px;
-                padding: 0;
-                font-size: 13px;
-                font-weight: 700;
-            }
-            QPushButton#floatingStart:hover, QPushButton#floatingStop:hover {
-                background: rgba(255, 255, 255, 0.24);
-            }
-            QPushButton#floatingClose {
-                background: transparent;
-                color: rgba(255, 255, 255, 0.55);
-                border: none;
-                font-size: 12px;
-                font-weight: 700;
-                padding: 0;
-            }
-            QPushButton#floatingClose:hover {
-                color: #ffffff;
-                background: rgba(255, 255, 255, 0.12);
-                border-radius: 4px;
-            }
-            QPushButton#floatingStart:disabled, QPushButton#floatingStop:disabled {
-                color: rgba(255, 255, 255, 0.32);
-                background: rgba(255, 255, 255, 0.05);
-            }
-            """
-        )
-
-    def update_view(self, title: str, elapsed: str, running: bool) -> None:
-        elided = self.name_label.fontMetrics().elidedText(
-            title, Qt.TextElideMode.ElideRight, 196
-        )
-        self.name_label.setText(elided)
-        self.time_label.setText(elapsed)
-        self.stop_button.setEnabled(running)
-        self.start_button.setEnabled(not running)
-
-    def show_at_default_corner(self) -> None:
-        if not self.isVisible():
-            self.adjustSize()
-            screen = QApplication.primaryScreen()
-            if screen is not None:
-                geo = screen.availableGeometry()
-                x = geo.right() - self.width() - 24
-                y = geo.bottom() - self.height() - 24
-                self.move(max(geo.left(), x), max(geo.top(), y))
-        self.show()
-        self.raise_()
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event) -> None:
-        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
-            event.accept()
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._drag_offset = None
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        self.restore_requested.emit()
-
-
 class PortalImportDialog(QDialog):
     """Pick projects (СПА 150) or tasks from the portal and import them."""
 
@@ -1921,12 +1803,12 @@ class MainWindow(QMainWindow):
         self._portal_sync_busy = False
         self._task_rows: dict[str, TaskRow] = {}
         self._task_rows_reference_date: str | None = None
+        self._pinned_task_row_id: str | None = None
         self.tray_available = QSystemTrayIcon.isSystemTrayAvailable()
         self.app_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
         self.setWindowIcon(self.app_icon)
         self.setWindowTitle(resolve_app_title())
         self.resize(980, 680)
-        self.setMinimumSize(800, 600)
         self.create_dialog = CreateTaskDialog(self.controller, self)
         self.create_dialog.create_requested.connect(self._create_task)
         self._mini_task_id: str | None = None
@@ -1943,6 +1825,7 @@ class MainWindow(QMainWindow):
         self._build_menu_bar()
         self._build_tray()
         self._apply_styles()
+        self._apply_window_constraints()
         self.refresh_ui()
 
         self.clock_timer = QTimer(self)
@@ -1954,7 +1837,39 @@ class MainWindow(QMainWindow):
     def _run_deferred_startup_sync(self) -> None:
         if self.controller.run_deferred_startup_sync():
             self.refresh_ui()
+            QTimer.singleShot(0, self._offer_focus_resume_if_pending)
         QTimer.singleShot(300, self._show_startup_notices)
+        QTimer.singleShot(350, self._offer_focus_resume_if_pending)
+
+    def _offer_focus_resume_if_pending(self) -> None:
+        if not self.controller.focus_resume_offer_pending:
+            return
+        paused_id = self.controller.focus_paused_task_id
+        if not paused_id:
+            self.controller.focus_resume_offer_pending = False
+            return
+        self.controller.focus_resume_offer_pending = False
+        self._prompt_focus_resume(paused_id)
+
+    def _prompt_focus_resume(self, paused_task_id: str) -> None:
+        try:
+            task = self.controller.find_task(paused_task_id)
+        except KeyError:
+            self.controller.take_focus_paused_task_id()
+            return
+        if task.is_completed():
+            self.controller.take_focus_paused_task_id()
+            return
+        answer = QMessageBox.question(
+            self,
+            "Фокус-сессия завершена",
+            f"Время концентрации вышло.\n\nПродолжить задачу «{task.title}»?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        self.controller.take_focus_paused_task_id()
+        if answer == QMessageBox.StandardButton.Yes:
+            self.controller.start_task(paused_task_id)
+        self.refresh_ui()
 
     def _show_startup_notices(self) -> None:
         notice = self.controller.webdav_startup_notice
@@ -1998,6 +1913,126 @@ class MainWindow(QMainWindow):
         app_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         self.app.setFont(app_font)
 
+    @staticmethod
+    def _freeze_toolbar_button_width(button: QPushButton) -> None:
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        button.setFixedWidth(button.sizeHint().width())
+
+    def _freeze_add_task_button_width(self) -> None:
+        self._add_task_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._add_task_button.setFixedWidth(
+            self._add_task_button.sizeHint().width() + ADD_TASK_BUTTON_EXTRA_WIDTH
+        )
+
+    def _freeze_summary_label_width(self) -> None:
+        metrics = self.today_total_label.fontMetrics()
+        sample_width = metrics.horizontalAdvance(SUMMARY_LABEL_SAMPLE) + 12
+        text_width = metrics.horizontalAdvance(self.today_total_label.text()) + 12
+        width = max(sample_width, text_width)
+        self.today_total_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.today_total_label.setFixedWidth(width)
+
+    def _sync_timer_digits_min_height(self) -> None:
+        font = QFont(self._mono_family, TIMER_DIGITS_FONT_SIZE)
+        font.setWeight(QFont.Weight.Light)
+        metrics = QFontMetrics(font)
+        sample_height = metrics.boundingRect("00:00:00").height()
+        height = sample_height + TIMER_DIGITS_VERTICAL_PAD
+        self.timer_digits.setFixedHeight(height)
+        self.timer_digits.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+
+    def _timer_card_inner_width(self) -> int:
+        return max(self.timer_card.width() - TIMER_CARD_HORIZONTAL_INSET, 120)
+
+    def _reset_timer_task_name_constraints(self) -> None:
+        self.active_task_name.setMinimumHeight(0)
+        self.active_task_name.setMaximumHeight(16777215)
+        self.active_task_name.setMinimumWidth(0)
+        self.active_task_name.setMaximumWidth(16777215)
+
+    def _fit_timer_task_name(self, title: str) -> None:
+        if not title.strip():
+            self._reset_timer_task_name_constraints()
+            return
+        display_text = break_long_unbroken_runs(title)
+        fit_wrapped_label_height(
+            self.active_task_name,
+            display_text,
+            width=self._timer_card_inner_width(),
+        )
+
+    def _relayout_timer_card(self) -> None:
+        card_layout = self.timer_card.layout()
+        panel_layout = self.timer_panel.layout()
+        if card_layout is None or panel_layout is None:
+            return
+        card_layout.invalidate()
+        card_layout.activate()
+        card_height = self.timer_card.sizeHint().height()
+        self.timer_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.timer_card.setFixedHeight(card_height)
+        self._sync_focus_section_height()
+        panel_layout.invalidate()
+        panel_layout.activate()
+        self.timer_panel.updateGeometry()
+        self.timer_card.updateGeometry()
+        self._update_main_window_min_height()
+
+    def _main_window_min_height(self) -> int:
+        self._sync_focus_section_height()
+        panel_height = self.timer_panel.sizeHint().height()
+        menu_height = (
+            self.menuBar().height()
+            if self.menuBar() is not None
+            else WINDOW_VERTICAL_CHROME
+        )
+        return max(WINDOW_MIN_HEIGHT, panel_height + menu_height + 4)
+
+    def _update_main_window_min_height(self) -> None:
+        min_height = self._main_window_min_height()
+        if self.minimumHeight() != min_height:
+            self.setMinimumHeight(min_height)
+
+    def _sync_focus_section_height(self) -> None:
+        focus_layout = self.focus_card.layout()
+        panel_layout = self.timer_panel.layout()
+        if focus_layout is None or panel_layout is None:
+            return
+        focus_layout.invalidate()
+        focus_layout.activate()
+        height = self.focus_card.sizeHint().height()
+        self.focus_card.setMinimumHeight(height)
+        self.focus_section.setMinimumHeight(height)
+
+    def _apply_window_constraints(self) -> None:
+        """Keep toolbar labels intact and block layouts that clip task titles."""
+        for button in self._view_buttons.values():
+            self._freeze_toolbar_button_width(button)
+        self._freeze_toolbar_button_width(self._portal_button)
+        self._freeze_add_task_button_width()
+        self._freeze_summary_label_width()
+        self._sync_timer_digits_min_height()
+
+        subbar_min = self._subbar.minimumSizeHint().width()
+        tasks_min = max(subbar_min, TASK_LIST_MIN_WIDTH)
+        self.tasks_page.setMinimumWidth(tasks_min)
+        self._update_main_window_min_height()
+        self.setMinimumWidth(
+            SIDEBAR_WIDTH + RIGHT_COLUMN_WIDTH + tasks_min,
+        )
+
     def _build_ui(self) -> None:
         central = QWidget()
         central.setObjectName("rootArea")
@@ -2006,13 +2041,19 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(0)
         root_layout.addWidget(self._build_sidebar())
 
-        self.pages = QStackedWidget()
-        self.pages.addWidget(self._build_tasks_page())  # index 0 — Задачи
-        self.pages.addWidget(self._build_focus_page())  # index 1 — Фокус
-        root_layout.addWidget(self.pages, 1)
+        self.tasks_page = self._build_tasks_page()
+
+        main_area = QWidget()
+        main_area.setObjectName("mainArea")
+        main_layout = QHBoxLayout(main_area)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self.tasks_page, 1)
+        self.right_column = self._build_right_column()
+        main_layout.addWidget(self.right_column, 0, Qt.AlignmentFlag.AlignTop)
+        root_layout.addWidget(main_area, 1)
 
         self.setCentralWidget(central)
-        self._set_page(0)
     def _build_sidebar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("sidebar")
@@ -2028,16 +2069,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addSpacing(12)
 
-        self._nav_buttons: dict[int, QPushButton] = {}
-        for index, (glyph, tip) in enumerate((("≣", "Задачи"), ("◎", "Фокус"))):
-            button = QPushButton(glyph)
-            button.setObjectName("navButton")
-            button.setFixedSize(38, 38)
-            button.setToolTip(tip)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(lambda _checked=False, i=index: self._set_page(i))
-            self._nav_buttons[index] = button
-            layout.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+        tasks_button = QPushButton("≣")
+        tasks_button.setObjectName("navButton")
+        tasks_button.setFixedSize(38, 38)
+        tasks_button.setToolTip("Задачи")
+        tasks_button.setProperty("active", True)
+        tasks_button.setEnabled(False)
+        layout.addWidget(tasks_button, 0, Qt.AlignmentFlag.AlignHCenter)
 
         layout.addStretch(1)
 
@@ -2050,12 +2088,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignHCenter)
 
         return bar
-    def _set_page(self, index: int) -> None:
-        self.pages.setCurrentIndex(index)
-        for i, button in self._nav_buttons.items():
-            button.setProperty("active", i == index)
-            button.style().unpolish(button)
-            button.style().polish(button)
+
     def _build_tasks_page(self) -> QWidget:
         page = QWidget()
         page.setObjectName("tasksPage")
@@ -2067,6 +2100,7 @@ class MainWindow(QMainWindow):
         subbar = QFrame()
         subbar.setObjectName("subbar")
         subbar.setFixedHeight(48)
+        self._subbar = subbar
         sub = QHBoxLayout(subbar)
         sub.setContentsMargins(20, 0, 20, 0)
         sub.setSpacing(6)
@@ -2099,6 +2133,10 @@ class MainWindow(QMainWindow):
 
         self.today_total_label = QLabel("")
         self.today_total_label.setObjectName("summaryLabel")
+        self.today_total_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
         sub.addWidget(self.today_total_label)
 
         portal_button = QPushButton("С портала")
@@ -2106,6 +2144,7 @@ class MainWindow(QMainWindow):
         portal_button.setFixedHeight(28)
         portal_button.setCursor(Qt.CursorShape.PointingHandCursor)
         portal_button.clicked.connect(self._open_portal_import)
+        self._portal_button = portal_button
         sub.addWidget(portal_button)
 
         add_button = QPushButton("＋ Новая задача")
@@ -2113,6 +2152,7 @@ class MainWindow(QMainWindow):
         add_button.setFixedHeight(30)
         add_button.setCursor(Qt.CursorShape.PointingHandCursor)
         add_button.clicked.connect(self._open_create_dialog)
+        self._add_task_button = add_button
         sub.addWidget(add_button)
 
         page_layout.addWidget(subbar)
@@ -2130,6 +2170,10 @@ class MainWindow(QMainWindow):
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.days_container = QWidget()
         self.days_container.setObjectName("taskListBg")
+        self.days_container.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         self.days_layout = QVBoxLayout(self.days_container)
         self.days_layout.setContentsMargins(20, 12, 20, 16)
         self.days_layout.setSpacing(6)
@@ -2137,14 +2181,27 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidget(self.days_container)
         content_layout.addWidget(self.scroll_area, 1)
 
-        content_layout.addWidget(self._build_timer_panel(), 0, Qt.AlignmentFlag.AlignTop)
         page_layout.addWidget(content, 1)
         return page
+
+    def _build_right_column(self) -> QWidget:
+        column = QWidget()
+        column.setObjectName("rightColumn")
+        column.setFixedWidth(268)
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self._build_timer_panel())
+        layout.addStretch(1)
+        return column
+
     def _build_timer_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("timerPanel")
-        panel.setFixedWidth(268)
-        panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Maximum)
+        panel.setMinimumWidth(268)
+        panel.setMaximumWidth(268)
+        panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.timer_panel = panel
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(18, 20, 18, 20)
@@ -2158,6 +2215,10 @@ class MainWindow(QMainWindow):
 
         self.timer_card = QFrame()
         self.timer_card.setObjectName("timerCard")
+        self.timer_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Minimum,
+        )
         card = QVBoxLayout(self.timer_card)
         card.setContentsMargins(14, 14, 14, 14)
         card.setSpacing(0)
@@ -2166,29 +2227,15 @@ class MainWindow(QMainWindow):
         self.active_task_name.setObjectName("tcardName")
         self.active_task_name.setWordWrap(True)
         card.addWidget(self.active_task_name)
-
-        self.active_task_description = QLabel("")
-        self.active_task_description.setObjectName("tcardDesc")
-        self.active_task_description.setWordWrap(True)
-        self.active_task_description.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        self.active_task_description.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Minimum,
-        )
-        self.active_task_description.setVisible(False)
-        card.addWidget(self.active_task_description)
-        self._timer_desc_spacing = QWidget()
-        self._timer_desc_spacing.setFixedHeight(8)
-        self._timer_desc_spacing.setVisible(False)
-        card.addWidget(self._timer_desc_spacing)
         card.addSpacing(14)
 
         self.timer_digits = QLabel("00:00:00")
         self.timer_digits.setObjectName("timerDigits")
+        self.timer_digits.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
         card.addWidget(self.timer_digits)
-        card.addSpacing(10)
+        card.addSpacing(TIMER_CARD_STATS_SPACING)
 
         sub = QHBoxLayout()
         sub.setSpacing(16)
@@ -2232,70 +2279,91 @@ class MainWindow(QMainWindow):
         self.complete_active_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.complete_active_button.clicked.connect(self._complete_active)
         layout.addWidget(self.complete_active_button)
-        layout.addStretch(1)
+
+        layout.addSpacing(12)
+        self.focus_section = self._build_focus_section()
+        layout.addWidget(self.focus_section)
 
         return panel
-    def _build_focus_page(self) -> QWidget:
-        page = QWidget()
-        page.setObjectName("focusPage")
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(40, 30, 40, 30)
-        outer.setSpacing(0)
-        outer.addStretch(1)
 
-        row = QHBoxLayout()
-        row.addStretch(1)
+    def _build_focus_section(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("focusPanel")
+        panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(0)
 
-        focus_card = QFrame()
-        focus_card.setObjectName("focusCard")
-        focus_card.setMinimumWidth(380)
-        focus_card.setMaximumWidth(520)
-        focus_layout = QVBoxLayout(focus_card)
-        focus_layout.setContentsMargins(40, 36, 40, 36)
-        focus_layout.setSpacing(22)
+        self.focus_card = QFrame()
+        self.focus_card.setObjectName("focusCard")
+        self.focus_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
+        focus_layout = QVBoxLayout(self.focus_card)
+        focus_layout.setContentsMargins(14, 16, 14, 16)
+        focus_layout.setSpacing(12)
+        focus_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         focus_title = QLabel("РЕЖИМ КОНЦЕНТРАЦИИ")
         focus_title.setObjectName("focusHeading")
         focus_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        focus_layout.addWidget(focus_title)
+        focus_layout.addWidget(focus_title, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.focus_display = QLabel("20:00")
         self.focus_display.setObjectName("focusDisplay")
         self.focus_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        focus_layout.addWidget(self.focus_display)
+        focus_layout.addWidget(self.focus_display, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.focus_status_label = QLabel("Готов к запуску")
         self.focus_status_label.setObjectName("focusStatusLabel")
         self.focus_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        focus_layout.addWidget(self.focus_status_label)
+        focus_layout.addWidget(self.focus_status_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        preset_layout = QHBoxLayout()
-        preset_layout.setSpacing(5)
-        preset_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.focus_buttons: dict[int, QPushButton] = {}
-        for minutes in self.focus_presets:
-            button = QPushButton(f"{minutes} мин")
-            button.setObjectName("focusDur")
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(lambda _checked=False, value=minutes: self._start_focus_timer(value))
-            self.focus_buttons[minutes] = button
-            preset_layout.addWidget(button)
-        focus_layout.addLayout(preset_layout)
+        preset_wrap = QWidget()
+        preset_wrap.setObjectName("focusPresetWrap")
+        preset_wrap.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        preset_layout = QVBoxLayout(preset_wrap)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(FOCUS_PRESET_ROW_SPACING)
+        preset_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        preset_rows = 0
+        for row_minutes in ((5, 10, 20), (30, 40)):
+            row = QHBoxLayout()
+            row.setSpacing(5)
+            row.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            for minutes in row_minutes:
+                button = QPushButton(f"{minutes} мин")
+                button.setObjectName("focusDur")
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setFixedHeight(FOCUS_PRESET_BUTTON_HEIGHT)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Fixed,
+                    QSizePolicy.Policy.Fixed,
+                )
+                button.clicked.connect(
+                    lambda _checked=False, value=minutes: self._start_focus_timer(value)
+                )
+                self.focus_buttons[minutes] = button
+                row.addWidget(button)
+            preset_layout.addLayout(row)
+            preset_rows += 1
+        preset_wrap.setMinimumHeight(
+            preset_rows * FOCUS_PRESET_BUTTON_HEIGHT
+            + max(0, preset_rows - 1) * FOCUS_PRESET_ROW_SPACING
+        )
+        focus_layout.addWidget(preset_wrap, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.focus_stop_button = QPushButton("Остановить таймер")
         self.focus_stop_button.setObjectName("focusGo")
-        self.focus_stop_button.setFixedHeight(40)
+        self.focus_stop_button.setFixedHeight(38)
         self.focus_stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.focus_stop_button.clicked.connect(self._stop_focus_timer)
         focus_layout.addWidget(self.focus_stop_button)
 
-        row.addWidget(focus_card)
-        row.addStretch(1)
-        outer.addLayout(row)
-        outer.addStretch(1)
-        return page
-
-
+        panel_layout.addWidget(self.focus_card)
+        return panel
 
     def _build_menu_bar(self) -> None:
         bar = self.menuBar()
@@ -2357,7 +2425,7 @@ class MainWindow(QMainWindow):
         qss = """
             /* ── Base ─────────────────────────────────────── */
             QWidget { background: #F2F3F7; color: #252835; font-family: "__SANS__"; }
-            QMainWindow, QWidget#rootArea, QWidget#tasksPage, QWidget#focusPage { background: #F2F3F7; }
+            QMainWindow, QWidget#rootArea, QWidget#tasksPage { background: #F2F3F7; }
             QLabel { background: transparent; }
             QToolTip {
                 background: #252835; color: #FFFFFF; border: none;
@@ -2365,12 +2433,38 @@ class MainWindow(QMainWindow):
             }
 
             /* ── Generic inputs (dialogs) ─────────────────── */
-            QLineEdit, QPlainTextEdit, QListWidget, QDateTimeEdit, QSpinBox {
+            QLineEdit, QPlainTextEdit, QListWidget, QDateTimeEdit {
                 background: #F5F6FA; border: 1px solid #D0D2D8; border-radius: 10px;
                 padding: 8px 12px; color: #252835; selection-background-color: #3B83F6;
             }
             QLineEdit:focus, QPlainTextEdit:focus, QListWidget:focus,
-            QDateTimeEdit:focus, QSpinBox:focus { border-color: #3B83F6; background: #FFFFFF; }
+            QDateTimeEdit:focus { border-color: #3B83F6; background: #FFFFFF; }
+            QSpinBox {
+                background: #F5F6FA; border: 1px solid #D0D2D8; border-radius: 10px;
+                padding: 8px 28px 8px 12px; color: #252835; min-height: 20px;
+            }
+            QSpinBox:focus { border-color: #3B83F6; background: #FFFFFF; }
+            QSpinBox::up-button, QSpinBox::down-button {
+                subcontrol-origin: border; width: 24px; background: #ECEEF3;
+                border: none; border-left: 1px solid #D0D2D8;
+            }
+            QSpinBox::up-button {
+                subcontrol-position: top right; border-top-right-radius: 9px;
+            }
+            QSpinBox::down-button {
+                subcontrol-position: bottom right; border-bottom-right-radius: 9px;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #E2E5EB; }
+            QSpinBox::up-arrow {
+                width: 0; height: 0;
+                border-left: 4px solid transparent; border-right: 4px solid transparent;
+                border-bottom: 5px solid #828B9A;
+            }
+            QSpinBox::down-arrow {
+                width: 0; height: 0;
+                border-left: 4px solid transparent; border-right: 4px solid transparent;
+                border-top: 5px solid #828B9A;
+            }
 
             /* ── Generic buttons (dialogs / fallback) ─────── */
             QPushButton {
@@ -2457,6 +2551,9 @@ class MainWindow(QMainWindow):
             QLabel#rowTimeSep { color: #D0D2D8; font-size: 11px; }
             QLabel#rowTimeVal { color: #828B9A; font-size: 11px; font-family: "__MONO__"; }
             QLabel#rowTimeVal[live="true"] { color: #27AE60; }
+            QLabel#taskRowDesc { color: #828B9A; font-size: 12px; }
+            QLabel#taskRowDesc[empty="true"] { color: #B8BDC9; font-style: italic; }
+            QWidget#taskRowPinnedFooter { background: transparent; }
 
             QWidget#rowActions { background: transparent; }
             QFrame#rowActionsFade {
@@ -2508,7 +2605,6 @@ class MainWindow(QMainWindow):
                 background: #F0FAF4; border: 1px solid rgba(39,174,96,0.30);
             }
             QLabel#tcardName { color: #252835; font-size: 13px; font-weight: 500; }
-            QLabel#tcardDesc { color: #828B9A; font-size: 12px; }
             QLabel#timerDigits {
                 color: #3B83F6; font-family: "__MONO__"; font-size: 38px; font-weight: 300;
             }
@@ -2535,29 +2631,32 @@ class MainWindow(QMainWindow):
             QPushButton#btnComplete:hover { background: #FBD0D0; }
             QPushButton#btnComplete:disabled { color: #E8A8A8; }
 
-            /* ── Focus page ───────────────────────────────── */
+            /* ── Focus card (under timer) ────────────────── */
+            QFrame#focusPanel { background: transparent; }
             QFrame#focusCard {
-                background: #FFFFFF; border: 1px solid #DCDEE3; border-radius: 16px;
+                background: #FFFFFF; border: 1px solid #DCDEE3; border-radius: 12px;
             }
+            QWidget#focusPresetWrap { background: transparent; }
             QLabel#focusHeading {
-                color: #B8BDC9; font-size: 11px; font-weight: 500; letter-spacing: 2px;
+                color: #B8BDC9; font-size: 10px; font-weight: 500; letter-spacing: 1.5px;
             }
             QLabel#focusDisplay {
-                color: #3B83F6; font-family: "__MONO__"; font-size: 64px; font-weight: 300;
+                color: #3B83F6; font-family: "__MONO__"; font-size: 44px; font-weight: 300;
             }
             QLabel#focusDisplay[done="true"] { color: #27AE60; }
-            QLabel#focusStatusLabel { color: #B8BDC9; font-size: 12px; }
+            QLabel#focusStatusLabel { color: #B8BDC9; font-size: 11px; }
             QPushButton#focusDur {
-                background: transparent; border: 1px solid #D0D2D8; border-radius: 8px;
-                color: #828B9A; padding: 6px 12px; font-size: 12px;
+                background: #F5F6FA; border: 1px solid #D0D2D8; border-radius: 10px;
+                color: #828B9A; padding: 5px 7px; font-size: 12px; min-width: 0;
+                min-height: 24px;
             }
-            QPushButton#focusDur:hover { background: #F5F6FA; }
+            QPushButton#focusDur:hover { background: #ECEEF3; }
             QPushButton#focusDur[active="true"] {
                 background: #3B83F6; border: 1px solid #3B83F6; color: #FFFFFF; font-weight: 500;
             }
             QPushButton#focusGo {
-                background: #F5F6FA; border: 1px solid #D0D2D8; border-radius: 10px;
-                color: #828B9A; font-weight: 500; letter-spacing: 1px; padding: 0 40px;
+                background: #FFFFFF; border: 1px solid #D0D2D8; border-radius: 10px;
+                color: #828B9A; font-weight: 500; letter-spacing: 1px;
             }
             QPushButton#focusGo:hover { background: #ECEEF3; color: #252835; }
             QPushButton#focusGo:disabled { color: #B8BDC9; }
@@ -2662,6 +2761,7 @@ class MainWindow(QMainWindow):
             self.today_total_label.setText(
                 f"Сегодня всего: {format_hm(self.controller.today_total_seconds())}"
             )
+        self._freeze_summary_label_width()
 
         while self.days_layout.count():
             item = self.days_layout.takeAt(0)
@@ -2698,13 +2798,26 @@ class MainWindow(QMainWindow):
                 row.resume_requested.connect(self._resume_task)
                 row.history_requested.connect(self._open_history)
                 row.edit_requested.connect(self._open_task_edit)
+                row.row_selected.connect(self._on_task_row_selected)
+                row.row_deselected.connect(self._on_task_row_deselected)
                 row.delete_requested.connect(self._confirm_delete_task)
                 row.plan_toggle_requested.connect(self._toggle_plan)
                 self._task_rows[task.id] = row
+                if task.id == self._pinned_task_row_id:
+                    row.set_pinned(True)
                 self.days_layout.addWidget(row)
         self.days_layout.addStretch(1)
+        self._refresh_task_row_layouts()
         self._refresh_active_panel()
         self._refresh_focus_panel()
+
+    def _refresh_task_row_layouts(self) -> None:
+        for row in self._task_rows.values():
+            row.refresh_layout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_task_row_layouts()
 
     def _update_task_row_times(self) -> None:
         """Update row durations on the clock tick without rebuilding the list."""
@@ -2735,14 +2848,6 @@ class MainWindow(QMainWindow):
                 widget.style().unpolish(widget)
                 widget.style().polish(widget)
                 widget.update()
-    def _set_active_task_description(self, text: str, *, visible: bool) -> None:
-        self.active_task_description.setVisible(visible)
-        self._timer_desc_spacing.setVisible(visible)
-        if visible:
-            self.active_task_description.setText(text)
-        else:
-            self.active_task_description.clear()
-
     def _refresh_active_panel(self) -> None:
         panel_task = self.controller.timer_panel_task()
         timer_running = (
@@ -2752,8 +2857,8 @@ class MainWindow(QMainWindow):
         )
         self._set_timer_running(timer_running)
         if not panel_task:
+            self._reset_timer_task_name_constraints()
             self.active_task_name.setText("Выберите задачу\nи нажмите Старт")
-            self._set_active_task_description("", visible=False)
             self.timer_digits.setText("00:00:00")
             self.timer_today_value.setText("0:00")
             self.timer_total_value.setText("0:00")
@@ -2761,15 +2866,11 @@ class MainWindow(QMainWindow):
             self.stop_active_button.setText("Стоп")
             self.stop_active_button.setEnabled(False)
             self.complete_active_button.setEnabled(False)
+            self._relayout_timer_card()
             return
         now = datetime.now()
         total = panel_task.total_seconds(now)
-        self.active_task_name.setText(panel_task.title)
-        description = panel_task.description.strip()
-        self._set_active_task_description(
-            description,
-            visible=timer_running and bool(description),
-        )
+        self._fit_timer_task_name(panel_task.title)
         self.timer_digits.setText(format_duration(total))
         self.timer_today_value.setText(format_hm(self.controller.today_seconds(panel_task)))
         self.timer_total_value.setText(format_hm(total))
@@ -2783,6 +2884,7 @@ class MainWindow(QMainWindow):
             self.stop_active_button.setText("Продолжить")
         self.stop_active_button.setEnabled(True)
         self.complete_active_button.setEnabled(True)
+        self._relayout_timer_card()
     def _refresh_focus_panel(self) -> None:
         focus_state = self.controller.focus_timer_state()
         selected_minutes = int(focus_state.get("selected_minutes") or 20)
@@ -2806,6 +2908,7 @@ class MainWindow(QMainWindow):
             button.style().unpolish(button)
             button.style().polish(button)
             button.update()
+
     def _set_focus_done(self, done: bool) -> None:
         if bool(self.focus_display.property("done")) != done:
             self.focus_display.setProperty("done", done)
@@ -2898,7 +3001,10 @@ class MainWindow(QMainWindow):
 
     def _start_focus_timer(self, minutes: int) -> None:
         self.controller.start_focus_timer(minutes)
-        self._refresh_focus_panel()
+        self.refresh_ui()
+        self._floating_user_dismissed = False
+        self.floating.show_at_default_corner()
+        self._update_floating()
         self._show_tray_message(
             "Режим концентрации",
             f"Запущен таймер на {minutes} мин.",
@@ -2907,8 +3013,11 @@ class MainWindow(QMainWindow):
         )
 
     def _stop_focus_timer(self) -> None:
+        paused_id = self.controller.focus_paused_task_id
         self.controller.stop_focus_timer()
-        self._refresh_focus_panel()
+        self.refresh_ui()
+        if paused_id:
+            self._prompt_focus_resume(paused_id)
 
     def _start_task(self, task_id: str) -> None:
         self.controller.start_task(task_id)
@@ -3004,6 +3113,15 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.refresh_ui()
 
+    def _on_task_row_selected(self, task_id: str) -> None:
+        self._pinned_task_row_id = task_id
+        for tid, row in self._task_rows.items():
+            row.set_pinned(tid == task_id)
+
+    def _on_task_row_deselected(self, task_id: str) -> None:
+        if self._pinned_task_row_id == task_id:
+            self._pinned_task_row_id = None
+
     def _confirm_delete_task(self, task_id: str) -> None:
         task = self.controller.find_task(task_id)
         answer = QMessageBox.question(
@@ -3014,6 +3132,8 @@ class MainWindow(QMainWindow):
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.controller.delete_task(task_id)
+            if self._pinned_task_row_id == task_id:
+                self._pinned_task_row_id = None
             if self._mini_task_id == task_id:
                 self._mini_task_id = None
                 self.floating.hide()
@@ -3053,6 +3173,7 @@ class MainWindow(QMainWindow):
         self._update_floating()
         self._update_tray_tooltip()
         if focus_status == "finished":
+            paused_task_id = self.controller.focus_paused_task_id
             QApplication.beep()
             QApplication.beep()
             QApplication.beep()
@@ -3063,11 +3184,17 @@ class MainWindow(QMainWindow):
                 QSystemTrayIcon.MessageIcon.Information,
                 6000,
             )
-            QMessageBox.information(
-                self,
-                "Фокус-сессия завершена",
-                "Время концентрации вышло.",
-            )
+            if paused_task_id:
+                self._prompt_focus_resume(paused_task_id)
+            else:
+                self.controller.take_focus_paused_task_id()
+                self.refresh_ui()
+                QMessageBox.information(
+                    self,
+                    "Фокус-сессия завершена",
+                    "Время концентрации вышло.",
+                )
+            return
 
     def _show_continue_prompt(self, task: Task) -> None:
         minutes = self.controller.reminder_interval_minutes()
@@ -3113,15 +3240,25 @@ class MainWindow(QMainWindow):
         )
         running_titles = [task.title for task in self.controller.running_tasks()]
         display_task: Task | None = None
+        focus_line: str | None = None
         if not window_open:
             if floating_task is _TRAY_TOOLTIP_FLOATING_AUTO:
                 display_task, tracked_id = self._floating_task_state()
                 self._mini_task_id = tracked_id
             else:
                 display_task = floating_task  # type: ignore[assignment]
+            view = resolve_floating_view(
+                focus_remaining_seconds=self.controller.focus_remaining_seconds(),
+                focus_session_task_id=self.controller.focus_session_task_id,
+                find_task=self.controller.find_task,
+                floating_task=display_task,
+            )
+            if view is not None and view.is_focus:
+                focus_line = f"{view.title} · {view.time_text}"
         task_titles = tray_tooltip_task_titles(
             running_task_titles=running_titles,
-            floating_task=display_task,
+            floating_task=display_task if focus_line is None else None,
+            focus_line=focus_line,
         )
         self.tray.setToolTip(
             format_tray_tooltip(
@@ -3174,17 +3311,26 @@ class MainWindow(QMainWindow):
         self._floating_user_dismissed = False
         self._show_floating(force=True)
 
+    def _resolve_floating_view(self) -> FloatingView | None:
+        task = self._resolve_floating_task()
+        return resolve_floating_view(
+            focus_remaining_seconds=self.controller.focus_remaining_seconds(),
+            focus_session_task_id=self.controller.focus_session_task_id,
+            find_task=self.controller.find_task,
+            floating_task=task,
+        )
+
     def _show_floating(self, *, force: bool = False) -> Task | None:
         if self._floating_user_dismissed and not force:
             return self._resolve_floating_task()
         self._floating_user_dismissed = False
-        task = self._resolve_floating_task()
-        if task is None:
+        view = self._resolve_floating_view()
+        if view is None:
             self.floating.hide()
             return None
         self.floating.show_at_default_corner()
         self._update_floating()
-        return task
+        return self._resolve_floating_task()
 
     def _floating_close(self) -> None:
         self._floating_user_dismissed = True
@@ -3200,15 +3346,26 @@ class MainWindow(QMainWindow):
     def _update_floating(self) -> None:
         if not self.floating.isVisible():
             return
-        task = self._resolve_floating_task()
-        if task is None:
+        view = self._resolve_floating_view()
+        if view is None:
             self.floating.hide()
             return
-        running = task.status == TaskStatus.RUNNING and task.active_session() is not None
-        elapsed = format_duration(task.total_seconds(datetime.now()))
-        self.floating.update_view(task.title, elapsed, running)
+        self.floating.update_view(
+            view.title,
+            view.time_text,
+            running=view.running,
+            is_focus=view.is_focus,
+        )
 
     def _floating_stop(self) -> None:
+        view = self._resolve_floating_view()
+        if view is None:
+            return
+        if view.is_focus:
+            self.controller.stop_focus_timer()
+            self.refresh_ui()
+            self._update_floating()
+            return
         task = self._resolve_floating_task()
         if task is None:
             return
@@ -3217,6 +3374,9 @@ class MainWindow(QMainWindow):
         self._update_floating()
 
     def _floating_start(self) -> None:
+        view = self._resolve_floating_view()
+        if view is None or view.is_focus:
+            return
         task = self._resolve_floating_task()
         if task is None:
             return

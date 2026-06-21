@@ -52,7 +52,7 @@
 | `plan_rollover_day` | string | да | последний rollover плана |
 | `filter_open_only` | bool | да | фильтр списка |
 | `reminder_interval_minutes` | int | да | 1…1440 |
-| `focus_timer` | object | да | `{selected_minutes, duration_minutes, ends_at}` |
+| `focus_timer` | object | да | `{selected_minutes, duration_minutes, ends_at, session_task_id, paused_task_id}` |
 | `bitrix.portal` | object | да | настройки СПА (не секрет) |
 | `bitrix.webhook_url` | — | **запрещено** | только локально в `bitrix.json` |
 
@@ -84,7 +84,9 @@
     "focus_timer": {
       "selected_minutes": 20,
       "duration_minutes": null,
-      "ends_at": null
+      "ends_at": null,
+      "session_task_id": null,
+      "paused_task_id": null
     }
   }
 }

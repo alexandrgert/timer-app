@@ -47,6 +47,8 @@ def test_from_dict_backfills_missing_ui_keys() -> None:
     assert state.ui["filter_open_only"] is False
     assert state.ui["reminder_interval_minutes"] == 40
     assert state.ui["focus_timer"]["selected_minutes"] == 20
+    assert state.ui["focus_timer"]["session_task_id"] is None
+    assert state.ui["focus_timer"]["paused_task_id"] is None
 
 
 def test_saved_json_is_human_readable_utf8(tmp_path: Path) -> None:

@@ -7,6 +7,44 @@ from .queries import active_task, find_task, today_str
 from .state import AppState
 
 
+def focus_session_title(minutes: int, *, now: datetime | None = None) -> str:
+    now = now or datetime.now()
+    stamp = now.strftime("%d.%m.%Y %H:%M")
+    return f"Концентрация · {minutes} мин · {stamp}"
+
+
+def create_focus_session_task(
+    state: AppState,
+    minutes: int,
+    *,
+    now: datetime | None = None,
+) -> Task:
+    now = now or datetime.now()
+    task = create_task(
+        state,
+        focus_session_title(minutes, now=now),
+        description="Режим концентрации",
+    )
+    task.sessions.append(Session(id=make_id(), started_at=now.isoformat()))
+    return task
+
+
+def finish_focus_session_task(
+    state: AppState,
+    task_id: str,
+    *,
+    now: datetime | None = None,
+) -> None:
+    now = now or datetime.now()
+    task = find_task(state, task_id)
+    session = task.active_session()
+    if session is not None and session.ended_at is None:
+        session.ended_at = now.isoformat()
+    if not task.is_completed():
+        task.status = TaskStatus.COMPLETED
+        task.completed_at = now.isoformat()
+
+
 def create_task(
     state: AppState,
     title: str,

@@ -119,6 +119,8 @@ def _ui_diff_lines(current: AppState, merged: AppState) -> list[str]:
             ("selected_minutes", "Фокус: выбранные минуты"),
             ("duration_minutes", "Фокус: длительность"),
             ("ends_at", "Фокус: окончание"),
+            ("session_task_id", "Фокус: задача сессии"),
+            ("paused_task_id", "Фокус: задача на паузе"),
         ):
             if current_focus.get(key) != merged_focus.get(key):
                 lines.append(f"{label}: {current_focus.get(key)!r} → {merged_focus.get(key)!r}")

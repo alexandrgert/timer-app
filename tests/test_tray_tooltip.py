@@ -5,6 +5,7 @@ from timerapp_ag.main_window import (
     format_tray_tooltip,
     main_window_is_open,
     resolve_floating_task,
+    resolve_floating_view,
     tray_activation_is_debounced,
     tray_tooltip_task_titles,
 )
@@ -68,6 +69,28 @@ def test_tray_tooltip_task_titles_deduplicates_running_and_floating() -> None:
         floating_task=running,
     )
     assert titles == ["Same"]
+
+
+def test_tray_tooltip_task_titles_includes_focus_line() -> None:
+    titles = tray_tooltip_task_titles(
+        running_task_titles=[],
+        floating_task=None,
+        focus_line="Концентрация · 20 мин · 00:19:00",
+    )
+    assert titles == ["Концентрация · 20 мин · 00:19:00"]
+
+
+def test_tray_tooltip_task_titles_focus_before_paused_task() -> None:
+    paused = Task(id="p1", day="2026-06-15", title="Paused task", status=TaskStatus.PAUSED)
+    titles = tray_tooltip_task_titles(
+        running_task_titles=[],
+        floating_task=paused,
+        focus_line="Концентрация · 10 мин · 00:09:30",
+    )
+    assert titles == [
+        "Концентрация · 10 мин · 00:09:30",
+        "Paused task",
+    ]
 
 
 def test_resolve_floating_task_returns_paused_tracked_task(controller: AppController) -> None:
@@ -179,3 +202,35 @@ def test_tray_activation_debounce_blocks_rapid_repeats() -> None:
     assert tray_activation_is_debounced(now=1.0, last_at=0.0) is False
     assert tray_activation_is_debounced(now=1.1, last_at=1.0) is True
     assert tray_activation_is_debounced(now=1.5, last_at=1.0) is False
+
+
+def test_resolve_floating_view_shows_focus_countdown(controller: AppController) -> None:
+    controller.start_focus_timer(20)
+    view = resolve_floating_view(
+        focus_remaining_seconds=controller.focus_remaining_seconds(),
+        focus_session_task_id=controller.focus_session_task_id,
+        find_task=controller.find_task,
+        floating_task=None,
+    )
+    assert view is not None
+    assert view.is_focus is True
+    assert view.running is True
+    assert "Концентрация" in view.title
+    assert view.time_text.startswith("00:")
+
+
+def test_resolve_floating_view_focus_overrides_paused_task(
+    controller: AppController,
+) -> None:
+    task = controller.create_task("Work", start_now=True)
+    controller.stop_task(task.id)
+    controller.start_focus_timer(15)
+    view = resolve_floating_view(
+        focus_remaining_seconds=controller.focus_remaining_seconds(),
+        focus_session_task_id=controller.focus_session_task_id,
+        find_task=controller.find_task,
+        floating_task=task,
+    )
+    assert view is not None
+    assert view.is_focus is True
+    assert "Концентрация" in view.title

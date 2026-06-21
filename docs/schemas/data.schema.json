@@ -91,6 +91,12 @@
         },
         "ends_at": {
           "anyOf": [{ "$ref": "#/$defs/isoDateTime" }, { "type": "null" }]
+        },
+        "session_task_id": {
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "paused_task_id": {
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
         }
       }
     },

@@ -19,5 +19,7 @@ def default_ui() -> dict:
             "selected_minutes": DEFAULT_FOCUS_SELECTED_MINUTES,
             "duration_minutes": None,
             "ends_at": None,
+            "session_task_id": None,
+            "paused_task_id": None,
         },
     }
