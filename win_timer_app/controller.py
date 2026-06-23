@@ -460,29 +460,23 @@ class AppController:
         self.next_reminder_at = datetime.now() + self._reminder_interval_td()
         self.save()
 
-    def update_task(
+    def add_session(
         self,
         task_id: str,
+        started_at: datetime,
+        ended_at: datetime,
         *,
-        title: str | None = None,
-        description: str | None = None,
-    ) -> Task:
-        task = self.find_task(task_id)
-        if title is not None:
-            stripped = title.strip()
-            if not stripped:
-                raise ValueError("Название задачи не может быть пустым.")
-            task.title = stripped
-        if description is not None:
-            task.description = description.strip()
-        self.save()
-        return task
-
-    def add_session(self, task_id: str, started_at: datetime, ended_at: datetime) -> Session:
+        comment: str = "",
+    ) -> Session:
         if ended_at <= started_at:
             raise ValueError("Время окончания должно быть позже начала.")
         task = self.find_task(task_id)
-        session = Session(id=make_id(), started_at=started_at.isoformat(), ended_at=ended_at.isoformat())
+        session = Session(
+            id=make_id(),
+            started_at=started_at.isoformat(),
+            ended_at=ended_at.isoformat(),
+            comment=comment.strip(),
+        )
         task.sessions.append(session)
         task.sessions.sort(key=lambda item: item.started_at)
         self.save()
@@ -510,7 +504,15 @@ class AppController:
             self.next_reminder_at = None
         self.save()
 
-    def update_session(self, task_id: str, session_id: str, started_at: datetime, ended_at: datetime) -> None:
+    def update_session(
+        self,
+        task_id: str,
+        session_id: str,
+        started_at: datetime,
+        ended_at: datetime,
+        *,
+        comment: str | None = None,
+    ) -> None:
         if ended_at <= started_at:
             raise ValueError("Время окончания должно быть позже начала.")
         task = self.find_task(task_id)
@@ -518,6 +520,8 @@ class AppController:
             if session.id == session_id:
                 session.started_at = started_at.isoformat()
                 session.ended_at = ended_at.isoformat()
+                if comment is not None:
+                    session.comment = comment.strip()
                 break
         else:
             raise KeyError(session_id)
