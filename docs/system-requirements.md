@@ -10,17 +10,30 @@
 
 | Платформа | Артефакт | ОС | Процессор | ОЗУ | Диск | Сеть |
 |-----------|----------|-----|-----------|-----|------|------|
-| **Linux** | `.deb`, `.rpm`, `.tar.xz`, `.tgz` amd64 | Debian 11+, Ubuntu 20.04+, Fedora 38+, RHEL 9+, openSUSE и др. с **glibc ≥ 2.31** | x86_64 (64-bit) | 512 МБ | ~200 МБ | для Битрикс24 / WebDAV |
+| **Linux** | `.deb`, `.rpm`, `.tar.xz`, `.tgz`, `.ebuild`, `.pisi`, `.pet`, `.pup`, `.lzm`, `.AppImage`, `.flatpak`, `.snap` amd64 | См. раздел Linux | x86_64 (64-bit) | 512 МБ | ~200 МБ | для Битрикс24 / WebDAV |
 | **Windows** | `.exe` win64 | Windows **10** (64-bit) или **11** | x86_64 (AMD64) | 512 МБ | ~150 МБ | для Битрикс24 / WebDAV |
 | **macOS** | `.app` в `.zip` | **macOS 11** Big Sur и новее | Apple Silicon (**arm64**) в релизе; Intel — отдельная сборка | 512 МБ | ~200 МБ | для Битрикс24 / WebDAV |
 
-**Не поддерживается:** 32-bit Linux/Windows, Flatpak/AppImage.
+**Не поддерживается:** 32-bit Linux/Windows.
 
 ---
 
 ## Linux (amd64)
 
-Поддерживаемые форматы: **`.deb`**, **`.rpm`**, **`.tar.xz`**, **`.tgz`**.
+Поддерживаемые форматы (в GitHub Releases, кроме `.deb` — также локально):
+
+| Формат | Дистрибутив / менеджер |
+|--------|-------------------------|
+| `.deb` | Debian, Ubuntu, Mint, Astra |
+| `.rpm` | Fedora, RHEL, openSUSE, Alt |
+| `.tar.xz`, `.tgz` | универсальная установка в `/` |
+| `.ebuild` | Gentoo (portage / overlay) |
+| `.pisi` | PiSi (Pardus и совместимые) |
+| `.pet`, `.pup` | Puppy Linux |
+| `.lzm` | Slax |
+| `.AppImage` | portable, большинство дистрибутивов |
+| `.flatpak` | Flatpak (`com.timerapp.LinkB24`) |
+| `.snap` | Snap |
 
 ### Минимум для работы
 
@@ -41,6 +54,13 @@
 | `.deb` | `sudo dpkg -i tasktimer-link-b24-*-amd64.deb && sudo apt-get install -f` |
 | `.rpm` | `sudo dnf install ./tasktimer-link-b24-*-amd64.rpm` или `sudo rpm -Uvh …rpm` |
 | `.tar.xz` / `.tgz` | `sudo tar -xJf …tar.xz -C /` или `sudo tar -xzf …tgz -C /` |
+| `.ebuild` | скопировать в overlay Gentoo, `ebuild … manifest && emerge` |
+| `.pisi` | `pisi install tasktimer-link-b24-*.pisi` |
+| `.pet` / `.pup` | Puppy Package Manager или `petget` |
+| `.lzm` | модуль Slax (activate / copy to modules) |
+| `.AppImage` | `chmod +x …AppImage && ./…AppImage` |
+| `.flatpak` | `flatpak install --user ./…flatpak` |
+| `.snap` | `sudo snap install ./…snap --dangerous` |
 
 ### WebDAV (Linux)
 
@@ -51,7 +71,7 @@
 
 - ОС: Linux **x86_64**
 - Локально: `dpkg-deb`, Python 3.10+, venv, `requirements-build.txt` → `./build_deb.sh` (только `.deb`)
-- CI / релиз: дополнительно `rpmbuild` (`rpm`) → все форматы через `FORMATS=deb,rpm,tar.xz,tgz ./build_linux.sh`
+- CI / релиз: `scripts/linux_ci_formats.env` — 12 Linux-форматов
 
 ---
 
@@ -129,13 +149,20 @@
 |------|-----------|
 | `tasktimer-link-b24-*-amd64.deb` | Linux (Debian/Ubuntu) |
 | `tasktimer-link-b24-*-amd64.rpm` | Linux (Fedora/RHEL/openSUSE) |
-| `tasktimer-link-b24-*-linux-amd64.tar.xz` / `*.tgz` | Linux (универсальный архив) |
+| `tasktimer-link-b24-*-linux-amd64.tar.xz` / `*.tgz` | Linux (архив) |
+| `tasktimer-link-b24-*.ebuild` | Gentoo |
+| `tasktimer-link-b24-*-x86_64.pisi` | PiSi |
+| `tasktimer-link-b24-*-amd64.pet` / `*.pup` | Puppy Linux |
+| `tasktimer-link-b24-*-amd64.lzm` | Slax |
+| `tasktimer-link-b24-*-amd64.AppImage` | AppImage |
+| `tasktimer-link-b24-*-amd64.flatpak` | Flatpak |
+| `tasktimer-link-b24_*_amd64.snap` | Snap |
 | `tasktimer-link-b24-*-win64.exe` | Windows |
 | `tasktimer-link-b24-*-macos-arm64.zip` / `*-macos-x86_64.zip` | macOS |
 
 **Текущий релиз:** [v0.5.31](https://github.com/alexandrgert/timer-app/releases/tag/v0.5.31) — Linux, Windows, macOS (arm64).
 
-CI (`.github/workflows/ci.yml`) при push в `main` собирает **Linux** (`.deb`, `.rpm`, `.tar.xz`, `.tgz`), **Windows .exe** и **macOS .zip**.
+CI (`.github/workflows/ci.yml`) при push в `main` собирает **все Linux-форматы** (см. `scripts/linux_ci_formats.env`), **Windows .exe** и **macOS .zip**.
 
 ---
 

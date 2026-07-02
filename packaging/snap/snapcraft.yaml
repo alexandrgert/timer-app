@@ -1,0 +1,31 @@
+name: tasktimer-link-b24
+version: "@VERSION@"
+summary: Desktop task timer with Bitrix24 integration
+description: |
+  TaskTimer link B24 — таймер задач, план на день, WebDAV и интеграция Битрикс24.
+
+grade: stable
+confinement: strict
+base: core22
+
+apps:
+  tasktimer-link-b24:
+    command: bin/tasktimer-link-b24
+    plugs:
+      - network
+      - home
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - opengl
+
+parts:
+  app:
+    plugin: dump
+    source: root/
+    organize:
+      opt/tasktimer-link-b24: opt/tasktimer-link-b24
+      usr/bin/tasktimer-link-b24: bin/tasktimer-link-b24
+      usr/share/applications: usr/share/applications
+      usr/share/icons: usr/share/icons

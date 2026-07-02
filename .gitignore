@@ -5,6 +5,7 @@ __pycache__/
 data.json
 build/
 dist/
+.cache/
 *.spec.bak
 src/*.egg-info/
 timer-app/

@@ -1,0 +1,26 @@
+app-id: com.timerapp.LinkB24
+runtime: org.freedesktop.Platform
+runtime-version: "23.08"
+sdk: org.freedesktop.Sdk
+command: tasktimer-link-b24
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home
+
+modules:
+  - name: tasktimer-link-b24
+    buildsystem: simple
+    build-commands:
+      - install -d /app/opt/tasktimer-link-b24 /app/bin /app/share/applications /app/share/icons/hicolor/scalable/apps
+      - cp -a opt/tasktimer-link-b24/. /app/opt/tasktimer-link-b24/
+      - install -Dm755 usr/bin/tasktimer-link-b24 /app/bin/tasktimer-link-b24
+      - install -Dm644 usr/share/applications/tasktimer-link-b24.desktop /app/share/applications/
+      - install -Dm644 usr/share/icons/hicolor/scalable/apps/tasktimer-link-b24.svg /app/share/icons/hicolor/scalable/apps/
+    sources:
+      - type: dir
+        path: staging

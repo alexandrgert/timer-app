@@ -47,7 +47,7 @@
 | **Linux** | `build_deb.sh` | `.deb` **amd64** |
 | **macOS** | `build_macos.sh` | `TaskTimer link B24.app` в `.zip` |
 
-**Linux:** локально — **`.deb` amd64**; в релизе CI также **`.rpm`**, **`.tar.xz`**, **`.tgz`**. Flatpak и AppImage **не используются**.
+**Linux:** локально — **`.deb` amd64**; в CI / релизе также **`.rpm`**, **`.tar.xz`**, **`.tgz`**, **`.ebuild`**, **`.pisi`**, **`.pet`**, **`.pup`**, **`.lzm`**, **AppImage**, **Flatpak**, **Snap**.
 
 CI: `.github/workflows/ci.yml` — jobs `build-linux`, `build-exe`, `build-macos`.
 

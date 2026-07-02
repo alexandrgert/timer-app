@@ -52,19 +52,30 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg-dev rpm \
+          sudo apt-get install -y --no-install-recommends \
+            dpkg-dev rpm xz-utils squashfs-tools curl \
+            flatpak flatpak-builder snapcraft \
+            libfuse2 fuse3 \
             libxkbcommon-x11-0 libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
             libxcb-cursor0 libxcb-xinerama0 libfontconfig1 libx11-6
+
+      - name: Set up Flatpak runtime
+        run: |
+          flatpak remote-add --if-not-exists --user flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y --user flathub \
+            org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
 
       - name: Read package version
         run: |
           echo "PACKAGE_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_ENV"
 
-      - name: Build Linux amd64 (.deb, .rpm, .tar.xz, .tgz)
+      - name: Build Linux amd64 (all release formats)
         run: |
           python -m venv .venv
           export VERSION="$PACKAGE_VERSION"
-          export FORMATS=deb,rpm,tar.xz,tgz
+          source scripts/linux_ci_formats.env
+          export FORMATS="$LINUX_CI_FORMATS"
           ALLOW_NO_BUMP=1 NO_BUMP=1 ./build_linux.sh
 
       - uses: actions/upload-artifact@v5
@@ -75,6 +86,14 @@ jobs:
             dist/tasktimer-link-b24-*-amd64.rpm
             dist/tasktimer-link-b24-*-linux-amd64.tar.xz
             dist/tasktimer-link-b24-*-linux-amd64.tgz
+            dist/tasktimer-link-b24-*.ebuild
+            dist/tasktimer-link-b24-*-x86_64.pisi
+            dist/tasktimer-link-b24-*-amd64.pet
+            dist/tasktimer-link-b24-*-amd64.pup
+            dist/tasktimer-link-b24-*-amd64.lzm
+            dist/tasktimer-link-b24-*-amd64.AppImage
+            dist/tasktimer-link-b24-*-amd64.flatpak
+            dist/tasktimer-link-b24_*_amd64.snap
           if-no-files-found: error
 
   build-exe:

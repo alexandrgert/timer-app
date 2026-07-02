@@ -61,13 +61,20 @@ pytest
 
 ### Linux (amd64)
 
-**Локально** собирается только **`.deb`**. Остальные форматы (`.rpm`, `.tar.xz`, `.tgz`) — в **CI / GitHub Releases**.
+**Локально** собирается только **`.deb`**. Все остальные Linux-форматы — только в **CI / GitHub Releases**.
 
-| Формат | Где собирается | Дистрибутивы / способ |
-|--------|----------------|------------------------|
-| `.deb` | локально + CI | Debian, Ubuntu, Mint, Astra и др. |
-| `.rpm` | только CI / релиз | Fedora, RHEL, openSUSE, Alt и др. |
-| `.tar.xz`, `.tgz` | только CI / релиз | универсальная установка в `/` (`sudo tar … -C /`) |
+| Формат | Где | Назначение |
+|--------|-----|------------|
+| `.deb` | локально + CI | Debian, Ubuntu, Mint, Astra |
+| `.rpm` | CI / релиз | Fedora, RHEL, openSUSE, Alt |
+| `.tar.xz`, `.tgz` | CI / релиз | универсальная установка в `/` |
+| `.ebuild` | CI / релиз | Gentoo (overlay / portage) |
+| `.pisi` | CI / релиз | PiSi (Pardus и совместимые) |
+| `.pet`, `.pup` | CI / релиз | Puppy Linux |
+| `.lzm` | CI / релиз | Slax-модуль |
+| `.AppImage` | CI / релиз | portable, большинство дистрибутивов |
+| `.flatpak` | CI / релиз | Flatpak (`com.timerapp.LinkB24`) |
+| `.snap` | CI / релиз | Snap Store / `snap install` |
 
 ```bash
 ./build_deb.sh
@@ -82,7 +89,7 @@ pytest
 
 Локальный результат: `dist/tasktimer-link-b24-<версия>-amd64.deb`.
 
-В релизе на GitHub дополнительно: `-amd64.rpm`, `-linux-amd64.tar.xz`, `-linux-amd64.tgz`.
+Полный список Linux-артефактов в CI — `scripts/linux_ci_formats.env` (12 форматов).
 
 ### macOS (`.app` в `.zip`)
 
@@ -94,7 +101,7 @@ pytest
 
 ### CI
 
-При push в `main` GitHub Actions собирает **Linux** (`.deb`, `.rpm`, `.tar.xz`, `.tgz`), **`.exe`** и **macOS `.zip`** (артефакты в workflow run).
+При push в `main` GitHub Actions собирает **все Linux-форматы** (см. таблицу выше), **`.exe`** и **macOS `.zip`**.
 
 Ручной bump без сборки: `python scripts/bump_version.py minor`
 
