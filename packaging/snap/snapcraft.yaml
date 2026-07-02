@@ -22,10 +22,17 @@ apps:
 
 parts:
   app:
-    plugin: dump
+    plugin: nil
     source: root/
-    organize:
-      opt/tasktimer-link-b24: opt/tasktimer-link-b24
-      usr/bin/tasktimer-link-b24: bin/tasktimer-link-b24
-      usr/share/applications: usr/share/applications
-      usr/share/icons: usr/share/icons
+    override-build: |
+      set -eux
+      mkdir -p "$CRAFT_PART_INSTALL/opt/tasktimer-link-b24"
+      mkdir -p "$CRAFT_PART_INSTALL/bin"
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/applications"
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps"
+      cp -a opt/tasktimer-link-b24/. "$CRAFT_PART_INSTALL/opt/tasktimer-link-b24/"
+      install -Dm755 usr/bin/tasktimer-link-b24 "$CRAFT_PART_INSTALL/bin/tasktimer-link-b24"
+      install -Dm644 usr/share/applications/tasktimer-link-b24.desktop \
+        "$CRAFT_PART_INSTALL/usr/share/applications/tasktimer-link-b24.desktop"
+      install -Dm644 usr/share/icons/hicolor/scalable/apps/tasktimer-link-b24.svg \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/tasktimer-link-b24.svg"
