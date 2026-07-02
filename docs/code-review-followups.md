@@ -17,7 +17,6 @@
 | — | WebDAV conflict без hash; pending notice UX | `_remote_changed_since_sync`, peek/clear + QMessageBox |
 | — | Legacy merge: только count сессий | сравнение содержимого сессий; `task_richer` по длительности |
 | — | `WEBDAV_ENABLED` перебивал UI | `respect_saved_enabled` в `load_webdav_config` |
-| — | Android: data loss, schema, ANR | atomic save, `.bak`, `duration_minutes?`, IO off main thread |
 
 ---
 
@@ -58,5 +57,3 @@
 
 - **Тесты shutdown:** покрыть `run_shutdown_backup` (save + backup + mock WebDAV).
 - **`task_richer`:** при равном числе сессий сравнивать `ended_at` / длительность — **сделано в v0.4.2**
-- **Android MVP:** atomic save, nullable `duration_minutes`, unit tests — **v0.4.2**; release keystore — перед Play Store
-- **CI:** job `build-apk` — **добавлен в v0.4.2**
