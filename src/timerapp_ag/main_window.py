@@ -880,9 +880,8 @@ class SettingsDialog(QDialog):
         self.webdav_sync_interval_spin.setValue(webdav.sync_interval_minutes)
         self.webdav_sync_interval_spin.setToolTip(
             "0 — периодическая проверка выключена. Иначе каждые N минут проверяется сервер; "
-            "при изменениях с другого устройства появится запрос «Скачать и объединить». "
-            "Работает в фоне, в том числе когда окно свёрнуто в трей. "
-            "На Android в фоне минимум 15 минут (ограничение ОС); в открытом приложении — точный интервал."
+            "при изменениях с другого компьютера появится запрос «Скачать и объединить». "
+            "Работает в фоне, в том числе когда окно свёрнуто в трей."
         )
         _configure_settings_form_field(self.webdav_sync_interval_spin)
         webdav_form.addRow("Синхронизировать каждые", self.webdav_sync_interval_spin)

@@ -1,4 +1,4 @@
-"""Разбор ISO-дат из data.json (в т.ч. с offset от Android) и расчёт длительности."""
+"""Разбор ISO-дат из data.json (в т.ч. с timezone offset) и расчёт длительности."""
 from __future__ import annotations
 
 from datetime import datetime

@@ -10,7 +10,7 @@ from timerapp_ag.domain.datetime_util import (
 from timerapp_ag.models import Session, Task, TaskStatus
 
 
-def test_parse_iso_datetime_handles_android_offset() -> None:
+def test_parse_iso_datetime_handles_timezone_offset() -> None:
     parsed = parse_iso_datetime("2026-06-28T20:31:00+03:00")
     assert parsed.utcoffset() is not None
     assert parsed.hour in {17, 18, 19, 20, 21}  # local-dependent
@@ -40,7 +40,7 @@ def test_session_local_date_uses_local_calendar_day() -> None:
     assert session_local_date("2026-06-28T20:31:00+03:00") == "2026-06-28"
 
 
-def test_task_total_seconds_with_android_timestamps() -> None:
+def test_task_total_seconds_with_timezone_timestamps() -> None:
     task = Task(
         id="t1",
         day="2026-06-28",

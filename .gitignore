@@ -5,17 +5,6 @@ __pycache__/
 data.json
 build/
 dist/
-android/.android-sdk/
-android/.jdk17/
-android/.gradle/
-android/.gradle-user-home/
-android/keystore/
-android/keystore.properties
-android/.kotlin/
-android/local.properties
-android/app/build/
-android/build/
-*.apk
 *.spec.bak
 src/*.egg-info/
 timer-app/

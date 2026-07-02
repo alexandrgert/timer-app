@@ -13,8 +13,6 @@ class Platform(Enum):
     WINDOWS = "windows"
     MACOS = "macos"
     LINUX = "linux"
-    ANDROID = "android"
-    IOS = "ios"
 
 
 def detect_platform() -> Platform:

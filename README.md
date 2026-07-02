@@ -2,7 +2,7 @@
 
 Десктопный таймер задач на Python + [PySide6](https://doc.qt.io/qtforpython/) с интеграцией **Битрикс24**: импорт проектов (СПА) и задач, создание задач на портале, синхронизация завершения. **Синхронизация базы задач через WebDAV** (Nextcloud, Яндекс.Диск и др.).
 
-**Fork** [useraitester-creator/win-timer-app-v1](https://github.com/useraitester-creator/win-timer-app-v1) (TaskTimer). От upstream: пакет `timerapp_ag`, WebDAV, Android, `.deb`, расширенная интеграция Bitrix24.
+**Fork** [useraitester-creator/win-timer-app-v1](https://github.com/useraitester-creator/win-timer-app-v1) (TaskTimer). От upstream: пакет `timerapp_ag`, WebDAV, `.deb`, расширенная интеграция Bitrix24.
 
 Инструкция для пользователей — [`ИНСТРУКЦИЯ.md`](ИНСТРУКЦИЯ.md). Сборка `.exe` — [`README-DISTRIBUTION.txt`](README-DISTRIBUTION.txt).
 
@@ -13,8 +13,7 @@
 - Системный трей и плавающий виджет активной или приостановленной задачи (скрывается после завершения); щелчок по иконке в трее показывает или скрывает главное окно.
 - **Объединение баз** от старых версий — по запросу при обновлении или из меню «Настройки».
 - **Битрикс24**: импорт проектов/задач, «Открыть в Б24», создание задачи с привязкой к компании, автозавершение на портале, **передача затраченного времени** из истории сессий.
-- **WebDAV**: синхронизация `data.json` между **компьютерами и Android**; отдельные кнопки «Скачать и объединить» / «Загрузить сейчас»; периодическая проверка сервера с запросом «Скачать и объединить?» / «Позже»; настройки в UI.
-- **Android** (Kotlin / Compose): те же задачи и WebDAV, фильтры Сегодня / В работе / Все, возобновление завершённых задач.
+- **WebDAV**: синхронизация `data.json` между **компьютерами**; отдельные кнопки «Скачать и объединить» / «Загрузить сейчас»; периодическая проверка сервера с запросом «Скачать и объединить?» / «Позже»; настройки в UI.
 - Настройки СПА «Реестр проектов» — в UI (**Определить с портала**) или в `ui.bitrix.portal` в `data.json`.
 
 Спецификация модели «план на день»: [`docs/superpowers/specs/2026-06-11-task-views-and-plan-design.md`](docs/superpowers/specs/2026-06-11-task-views-and-plan-design.md).
@@ -85,23 +84,9 @@ pytest
 
 Результат: `dist/tasktimer-link-b24-<версия>-macos-<arch>.zip` (arm64 или x86_64). Сборка только на **macOS**.
 
-### Android (`.apk`)
-
-```bash
-./build_apk.sh
-```
-
-Перед сборкой APK сверьте `versionName` / `versionCode` в `android/app/build.gradle.kts` с `pyproject.toml`:
-
-```bash
-python scripts/check_version_sync.py
-```
-
-Результат: `dist/tasktimer-link-b24-<версия>-android.apk`. См. [системные требования](docs/system-requirements.md).
-
 ### CI
 
-При push в `main` GitHub Actions собирает **`.deb`**, **`.exe`**, **macOS `.zip`** и **`.apk`** (артефакты в workflow run).
+При push в `main` GitHub Actions собирает **`.deb`**, **`.exe`** и **macOS `.zip`** (артефакты в workflow run).
 
 Ручной bump без сборки: `python scripts/bump_version.py minor`
 
@@ -117,7 +102,6 @@ python scripts/check_version_sync.py
 | Linux amd64 | `tasktimer-link-b24-0.5.31-amd64.deb` |
 | Windows x64 | `tasktimer-link-b24-0.5.31-win64.exe` |
 | macOS arm64 | `tasktimer-link-b24-0.5.31-macos-arm64.zip` *(Apple Silicon)* |
-| Android | `tasktimer-link-b24-0.5.31-android.apk` |
 
 Linux:
 
@@ -144,8 +128,6 @@ run.sh                 # запуск из venv проекта
 build_deb.sh           # сборка .deb (Linux amd64)
 build_exe.ps1          # сборка .exe (Windows x64)
 build_macos.sh         # сборка .app zip (macOS)
-build_apk.sh           # сборка .apk (Android)
-android/               # Kotlin / Compose, WebDAV, общая схема data.json
 src/timerapp_ag/
   main.py              # точка входа
   controller.py        # бизнес-логика
@@ -157,7 +139,7 @@ src/timerapp_ag/
   platform_paths.py    # пути данных и конфигурации
   webdav_*.py          # синхронизация с облаком
   bitrix*.py           # Битрикс24
-scripts/               # bump_version, check_version_sync
+scripts/               # bump_version
 tests/
 docs/                  # архитектура, WebDAV, release notes
 ```
@@ -194,7 +176,7 @@ docs/                  # архитектура, WebDAV, release notes
 |--|--|--|
 | Пакет | `win_timer_app` | `timerapp_ag` |
 | Bitrix24 | базовая интеграция | WebDAV-sync секретов, настройки СПА в UI, расширенный single-instance |
-| Linux / Android | нет | `.deb` amd64, **APK** (Compose, WebDAV) |
+| Linux | нет | `.deb` amd64 |
 | WebDAV | нет | синхронизация `data.json` |
 | Legacy merge | нет | объединение баз старых версий |
 | Название продукта | TaskTimer | TaskTimer link B24 |

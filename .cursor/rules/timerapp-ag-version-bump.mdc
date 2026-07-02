@@ -1,6 +1,6 @@
 ---
-description: TaskTimer — semver в pyproject.toml и синхронизация версий перед сборкой и GitHub Release
-globs: build_deb.sh,build_*.sh,build_apk.sh,android/**,pyproject.toml,scripts/bump_version.py
+description: TaskTimer — semver в pyproject.toml перед сборкой и GitHub Release
+globs: build_deb.sh,build_*.sh,pyproject.toml,scripts/bump_version.py
 alwaysApply: true
 ---
 
@@ -10,74 +10,27 @@ alwaysApply: true
 
 Единственный источник — **`pyproject.toml`** → `[project].version`.
 
-## Android APK: сверка перед сборкой (обязательно)
-
-**Перед `./build_apk.sh`, push в `main`/`master` и любым GitHub Actions, которые собирают APK**, версия Android **должна совпадать** с `pyproject.toml`.
-
-CI job `build-apk` **не читает** `pyproject.toml` для имени APK — только `versionName` из `build.gradle.kts`. Расхождение → в артефактах GitHub `.deb`/`.exe` одна версия, `.apk` — другая.
-
-### Автопроверка
-
-```bash
-python scripts/check_version_sync.py   # exit 1 при расхождении
-```
-
-В `.github/workflows/ci.yml` шаг `Verify Android version matches pyproject.toml` выполняется **перед** `build-apk`. Локально — тот же скрипт перед push.
-
-### Файлы
-
-| Файл | Поле |
-|------|------|
-| `pyproject.toml` | `[project].version` — **эталон** |
-| `android/app/build.gradle.kts` | `versionName` (semver), `versionCode` (целое, монотонно растёт) |
-
-### Чеклист (агент и разработчик)
-
-1. Прочитать версию из `pyproject.toml`.
-2. Убедиться, что в `build.gradle.kts`: `versionName = "<та же версия>"`.
-3. Поднять `versionCode` (например `523` для `0.5.23`), если версия изменилась.
-4. Запустить `python scripts/check_version_sync.py` — должен вывести `OK`.
-5. Только после совпадения — `./build_apk.sh` или push (CI соберёт APK).
-
-```bash
-python scripts/check_version_sync.py
-python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
-grep versionName android/app/build.gradle.kts
-```
-
-Если версии различаются — **сначала правка `build.gradle.kts`, commit, потом сборка/релиз**. Не выкладывать на GitHub Release набор, где `.deb`/`.exe` — одна версия, а `.apk` — другая.
-
 ## Обязательный bump при сборке
 
-**Любая сборка** — релизная, локальная, «для проверки», «просто посмотреть» — **всегда** поднимает версию минимум на **patch** перед `./build_deb.sh` / `./build_apk.sh`.
-
-Проверочная сборка ≠ исключение: иначе два одинаковых `0.5.30` deb/apk не отличить и легко перепутать с уже установленным.
+**Любая сборка** — релизная, локальная, «для проверки» — **всегда** поднимает версию минимум на **patch** перед `./build_deb.sh` (и другими `build_*.sh`).
 
 ### Запрещено агенту по умолчанию
 
 - `NO_BUMP=1` / `ALLOW_NO_BUMP=1` — **не использовать**, если пользователь **явно** не написал «пересобери без смены версии» / «тот же номер версии».
-- Фразы «для проверки», «локально», «собери deb/apk» — **всё равно bump**.
 
-### Порядок перед любой локальной сборкой deb + apk
+### Порядок локальной сборки
 
 1. `./build_deb.sh` (или `BUMP=minor ./build_deb.sh` после фич) — bump в `pyproject.toml`.
-2. Синхронизировать `android/app/build.gradle.kts`: `versionName`, `versionCode`.
-3. `python scripts/check_version_sync.py`
-4. `./build_apk.sh`
-
-- По умолчанию: `./build_deb.sh` → `scripts/bump_version.py patch`.
+2. Сборка нужного артефакта: `.deb`, `.exe` или macOS `.zip`.
 
 | Тип | Когда | Пример |
 |-----|--------|--------|
-| **`patch`** (по умолчанию) | багфиксы, мелкие правки | 0.4.4 → 0.4.5 |
-| **`minor`** | новые фичи, заметные изменения UX/Б24 | 0.4.5 → 0.5.0 |
-| **`major`** | ломающие изменения формата данных/API | 0.5.0 → 1.0.0 |
+| **`patch`** (по умолчанию) | багфиксы, мелкие правки | 0.5.30 → 0.5.31 |
+| **`minor`** | новые фичи, заметные изменения UX/Б24 | 0.5.31 → 0.6.0 |
+| **`major`** | ломающие изменения формата данных/API | 0.6.0 → 1.0.0 |
 
 ```bash
-# фиксы (default)
 ./build_deb.sh
-
-# новые фичи
 BUMP=minor ./build_deb.sh
 ```
 
@@ -85,6 +38,6 @@ BUMP=minor ./build_deb.sh
 
 ## Агент
 
-После **фич** перед сборкой — `BUMP=minor ./build_deb.sh`. После **фиксов** и **проверочных сборок** — `./build_deb.sh` (patch). **Никогда** не пропускать bump «потому что проверка».
+После **фич** — `BUMP=minor ./build_deb.sh`. После **фиксов** — `./build_deb.sh` (patch). **Никогда** не пропускать bump «потому что проверка».
 
-Перед **GitHub Release** (все платформы): сверить `versionName`/`versionCode` в `android/app/build.gradle.kts` с `pyproject.toml`; при расхождении — исправить и закоммитить **до** push, чтобы CI не собрал APK со старой версией.
+Перед **GitHub Release**: версия в `pyproject.toml` должна совпадать с тегом релиза.
