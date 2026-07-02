@@ -59,22 +59,36 @@ pytest
 
 Результат: `dist\tasktimer-link-b24-<версия>-win64.exe`. Сборка только на **Windows 10/11 x64**.
 
-### Linux (`.deb` amd64)
+### Linux (`.deb`, `.rpm`, `.tar.xz`, `.tgz` amd64)
 
-Единственный формат дистрибуции для Linux — **Debian-пакет amd64** (не Flatpak).
+Форматы дистрибуции для Linux **amd64** (не Flatpak):
+
+| Формат | Дистрибутивы / способ |
+|--------|------------------------|
+| `.deb` | Debian, Ubuntu, Mint, Astra и др. |
+| `.rpm` | Fedora, RHEL, openSUSE, Alt и др. |
+| `.tar.xz`, `.tgz` | универсальная установка в `/` (`sudo tar … -C /`) |
 
 ```bash
-./build_deb.sh
+./build_linux.sh
 ```
 
-Требования: `dpkg-deb`, venv, PyInstaller из `requirements-build.txt`, хост **x86_64**.
+Только `.deb`: `./build_deb.sh` (то же, что `FORMATS=deb ./build_linux.sh`).
+
+Требования: `dpkg-deb`, `rpmbuild` (`rpm`), venv, PyInstaller из `requirements-build.txt`, хост **x86_64**.
 
 | Команда | Когда |
 |---------|--------|
-| `./build_deb.sh` | мелкие правки → **patch** (в т.ч. локальная сборка) |
-| `BUMP=minor ./build_deb.sh` | новые фичи → **minor** |
+| `./build_linux.sh` | все Linux-форматы → **patch** (в т.ч. локальная сборка) |
+| `BUMP=minor ./build_linux.sh` | новые фичи → **minor** |
+| `FORMATS=deb,rpm ./build_linux.sh` | выборочные форматы |
 
-Результат: `dist/tasktimer-link-b24-<версия>-amd64.deb`.
+Результат в `dist/`:
+
+- `tasktimer-link-b24-<версия>-amd64.deb`
+- `tasktimer-link-b24-<версия>-amd64.rpm`
+- `tasktimer-link-b24-<версия>-linux-amd64.tar.xz`
+- `tasktimer-link-b24-<версия>-linux-amd64.tgz`
 
 ### macOS (`.app` в `.zip`)
 
@@ -86,7 +100,7 @@ pytest
 
 ### CI
 
-При push в `main` GitHub Actions собирает **`.deb`**, **`.exe`** и **macOS `.zip`** (артефакты в workflow run).
+При push в `main` GitHub Actions собирает **Linux** (`.deb`, `.rpm`, `.tar.xz`, `.tgz`), **`.exe`** и **macOS `.zip`** (артефакты в workflow run).
 
 Ручной bump без сборки: `python scripts/bump_version.py minor`
 
@@ -97,18 +111,32 @@ pytest
 
 **Последний релиз:** [v0.5.31](https://github.com/alexandrgert/timer-app/releases/tag/v0.5.31) — [текст для пользователей](docs/release-notes-v0.5.31.md)
 
-| Платформа | Файл |
+| Платформа | Файлы |
 |-----------|------|
-| Linux amd64 | `tasktimer-link-b24-0.5.31-amd64.deb` |
+| Linux amd64 | `.deb`, `.rpm`, `.tar.xz`, `.tgz` |
 | Windows x64 | `tasktimer-link-b24-0.5.31-win64.exe` |
 | macOS arm64 | `tasktimer-link-b24-0.5.31-macos-arm64.zip` *(Apple Silicon)* |
 
-Linux:
+Linux (Debian/Ubuntu):
 
 ```bash
 wget https://github.com/alexandrgert/timer-app/releases/download/v0.5.31/tasktimer-link-b24-0.5.31-amd64.deb
 sudo dpkg -i tasktimer-link-b24-0.5.31-amd64.deb
 sudo apt-get install -f
+tasktimer-link-b24
+```
+
+Linux (Fedora/RHEL):
+
+```bash
+sudo dnf install ./tasktimer-link-b24-0.5.31-amd64.rpm
+tasktimer-link-b24
+```
+
+Linux (из архива):
+
+```bash
+sudo tar -xJf tasktimer-link-b24-0.5.31-linux-amd64.tar.xz -C /
 tasktimer-link-b24
 ```
 

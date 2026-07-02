@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Сборка каталога dist/TaskTimer/ для .deb (Linux amd64, onedir — надёжнее для Qt).
+# Сборка каталога dist/TaskTimer/ для Linux amd64 (onedir — надёжнее для Qt).
 
 import pathlib
 import runpy

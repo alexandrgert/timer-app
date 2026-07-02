@@ -10,7 +10,7 @@
 
 | Платформа | Артефакт | ОС | Процессор | ОЗУ | Диск | Сеть |
 |-----------|----------|-----|-----------|-----|------|------|
-| **Linux** | `.deb` amd64 | Debian 11+, Ubuntu 20.04+, Mint, Astra и др. с **glibc ≥ 2.31** | x86_64 (64-bit) | 512 МБ | ~200 МБ | для Битрикс24 / WebDAV |
+| **Linux** | `.deb`, `.rpm`, `.tar.xz`, `.tgz` amd64 | Debian 11+, Ubuntu 20.04+, Fedora 38+, RHEL 9+, openSUSE и др. с **glibc ≥ 2.31** | x86_64 (64-bit) | 512 МБ | ~200 МБ | для Битрикс24 / WebDAV |
 | **Windows** | `.exe` win64 | Windows **10** (64-bit) или **11** | x86_64 (AMD64) | 512 МБ | ~150 МБ | для Битрикс24 / WebDAV |
 | **macOS** | `.app` в `.zip` | **macOS 11** Big Sur и новее | Apple Silicon (**arm64**) в релизе; Intel — отдельная сборка | 512 МБ | ~200 МБ | для Битрикс24 / WebDAV |
 
@@ -18,7 +18,9 @@
 
 ---
 
-## Linux (`.deb` amd64)
+## Linux (amd64)
+
+Поддерживаемые форматы: **`.deb`**, **`.rpm`**, **`.tar.xz`**, **`.tgz`**.
 
 ### Минимум для работы
 
@@ -30,7 +32,15 @@
 | ОЗУ | 512 МБ свободной (рекомендуется 1 ГБ+) |
 | Диск | ~200 МБ под программу; данные — отдельно в `~/.local/share/timerapp/` |
 
-Пакет тянет зависимости: OpenGL/EGL, X11, fontconfig, DBus, libtiff (см. `Depends` в `build_deb.sh`).
+Пакеты `.deb` / `.rpm` тянут зависимости автоматически; для `.tar.xz` / `.tgz` нужны те же системные библиотеки (OpenGL/EGL, X11, fontconfig, DBus, libtiff).
+
+### Установка
+
+| Формат | Команда |
+|--------|---------|
+| `.deb` | `sudo dpkg -i tasktimer-link-b24-*-amd64.deb && sudo apt-get install -f` |
+| `.rpm` | `sudo dnf install ./tasktimer-link-b24-*-amd64.rpm` или `sudo rpm -Uvh …rpm` |
+| `.tar.xz` / `.tgz` | `sudo tar -xJf …tar.xz -C /` или `sudo tar -xzf …tgz -C /` |
 
 ### WebDAV (Linux)
 
@@ -40,8 +50,8 @@
 ### Сборка (разработчик)
 
 - ОС: Linux **x86_64**
-- `dpkg-deb`, Python 3.10+, venv, `requirements-build.txt`
-- Команда: `./build_deb.sh` → `dist/tasktimer-link-b24-<версия>-amd64.deb`
+- `dpkg-deb`, `rpmbuild` (`rpm`), Python 3.10+, venv, `requirements-build.txt`
+- Команда: `./build_linux.sh` → все форматы в `dist/`
 
 ---
 
@@ -117,13 +127,15 @@
 
 | Файл | Платформа |
 |------|-----------|
-| `tasktimer-link-b24-*-amd64.deb` | Linux |
+| `tasktimer-link-b24-*-amd64.deb` | Linux (Debian/Ubuntu) |
+| `tasktimer-link-b24-*-amd64.rpm` | Linux (Fedora/RHEL/openSUSE) |
+| `tasktimer-link-b24-*-linux-amd64.tar.xz` / `*.tgz` | Linux (универсальный архив) |
 | `tasktimer-link-b24-*-win64.exe` | Windows |
 | `tasktimer-link-b24-*-macos-arm64.zip` / `*-macos-x86_64.zip` | macOS |
 
 **Текущий релиз:** [v0.5.31](https://github.com/alexandrgert/timer-app/releases/tag/v0.5.31) — Linux, Windows, macOS (arm64).
 
-CI (`.github/workflows/ci.yml`) при push в `main` собирает **Linux .deb**, **Windows .exe** и **macOS .zip**.
+CI (`.github/workflows/ci.yml`) при push в `main` собирает **Linux** (`.deb`, `.rpm`, `.tar.xz`, `.tgz`), **Windows .exe** и **macOS .zip**.
 
 ---
 
