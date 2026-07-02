@@ -50,8 +50,8 @@
 ### Сборка (разработчик)
 
 - ОС: Linux **x86_64**
-- `dpkg-deb`, `rpmbuild` (`rpm`), Python 3.10+, venv, `requirements-build.txt`
-- Команда: `./build_linux.sh` → все форматы в `dist/`
+- Локально: `dpkg-deb`, Python 3.10+, venv, `requirements-build.txt` → `./build_deb.sh` (только `.deb`)
+- CI / релиз: дополнительно `rpmbuild` (`rpm`) → все форматы через `FORMATS=deb,rpm,tar.xz,tgz ./build_linux.sh`
 
 ---
 

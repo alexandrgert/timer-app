@@ -59,36 +59,30 @@ pytest
 
 Результат: `dist\tasktimer-link-b24-<версия>-win64.exe`. Сборка только на **Windows 10/11 x64**.
 
-### Linux (`.deb`, `.rpm`, `.tar.xz`, `.tgz` amd64)
+### Linux (amd64)
 
-Форматы дистрибуции для Linux **amd64** (не Flatpak):
+**Локально** собирается только **`.deb`**. Остальные форматы (`.rpm`, `.tar.xz`, `.tgz`) — в **CI / GitHub Releases**.
 
-| Формат | Дистрибутивы / способ |
-|--------|------------------------|
-| `.deb` | Debian, Ubuntu, Mint, Astra и др. |
-| `.rpm` | Fedora, RHEL, openSUSE, Alt и др. |
-| `.tar.xz`, `.tgz` | универсальная установка в `/` (`sudo tar … -C /`) |
+| Формат | Где собирается | Дистрибутивы / способ |
+|--------|----------------|------------------------|
+| `.deb` | локально + CI | Debian, Ubuntu, Mint, Astra и др. |
+| `.rpm` | только CI / релиз | Fedora, RHEL, openSUSE, Alt и др. |
+| `.tar.xz`, `.tgz` | только CI / релиз | универсальная установка в `/` (`sudo tar … -C /`) |
 
 ```bash
-./build_linux.sh
+./build_deb.sh
 ```
 
-Только `.deb`: `./build_deb.sh` (то же, что `FORMATS=deb ./build_linux.sh`).
-
-Требования: `dpkg-deb`, `rpmbuild` (`rpm`), venv, PyInstaller из `requirements-build.txt`, хост **x86_64**.
+Требования для локальной сборки: `dpkg-deb`, venv, PyInstaller из `requirements-build.txt`, хост **x86_64**.
 
 | Команда | Когда |
 |---------|--------|
-| `./build_linux.sh` | все Linux-форматы → **patch** (в т.ч. локальная сборка) |
-| `BUMP=minor ./build_linux.sh` | новые фичи → **minor** |
-| `FORMATS=deb,rpm ./build_linux.sh` | выборочные форматы |
+| `./build_deb.sh` | локально → **patch** |
+| `BUMP=minor ./build_deb.sh` | новые фичи → **minor** |
 
-Результат в `dist/`:
+Локальный результат: `dist/tasktimer-link-b24-<версия>-amd64.deb`.
 
-- `tasktimer-link-b24-<версия>-amd64.deb`
-- `tasktimer-link-b24-<версия>-amd64.rpm`
-- `tasktimer-link-b24-<версия>-linux-amd64.tar.xz`
-- `tasktimer-link-b24-<версия>-linux-amd64.tgz`
+В релизе на GitHub дополнительно: `-amd64.rpm`, `-linux-amd64.tar.xz`, `-linux-amd64.tgz`.
 
 ### macOS (`.app` в `.zip`)
 

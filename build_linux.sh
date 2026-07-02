@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Сборка Linux amd64: .deb, .rpm, .tar.xz, .tgz (PyInstaller onedir + FHS).
+# Сборка Linux amd64 (PyInstaller onedir + FHS).
+# Локально по умолчанию — только .deb; все форматы: FORMATS=deb,rpm,tar.xz,tgz (CI / релиз).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,4 +32,4 @@ if linux_pkg_format_enabled tar.xz || linux_pkg_format_enabled tgz; then
   linux_pkg_build_tarballs
 fi
 
-echo "==> Linux-сборка завершена (FORMATS=${FORMATS:-deb,rpm,tar.xz,tgz})"
+echo "==> Linux-сборка завершена (FORMATS=${FORMATS:-deb})"

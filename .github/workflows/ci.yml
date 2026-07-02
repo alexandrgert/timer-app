@@ -64,6 +64,7 @@ jobs:
         run: |
           python -m venv .venv
           export VERSION="$PACKAGE_VERSION"
+          export FORMATS=deb,rpm,tar.xz,tgz
           ALLOW_NO_BUMP=1 NO_BUMP=1 ./build_linux.sh
 
       - uses: actions/upload-artifact@v5

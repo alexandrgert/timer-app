@@ -305,7 +305,7 @@ linux_pkg_build_tarballs() {
 
 linux_pkg_format_enabled() {
   local format="$1"
-  local formats="${FORMATS:-deb,rpm,tar.xz,tgz}"
+  local formats="${FORMATS:-deb}"
   local item
   IFS=',' read -ra _linux_pkg_format_list <<< "$formats"
   for item in "${_linux_pkg_format_list[@]}"; do

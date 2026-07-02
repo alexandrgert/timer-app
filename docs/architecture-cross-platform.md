@@ -47,9 +47,9 @@
 | **Linux** | `build_deb.sh` | `.deb` **amd64** |
 | **macOS** | `build_macos.sh` | `TaskTimer link B24.app` в `.zip` |
 
-**Linux:** единственный формат дистрибуции — **Debian-пакет amd64**. Flatpak и AppImage **не используются**.
+**Linux:** локально — **`.deb` amd64**; в релизе CI также **`.rpm`**, **`.tar.xz`**, **`.tgz`**. Flatpak и AppImage **не используются**.
 
-CI: `.github/workflows/ci.yml` — jobs `build-deb`, `build-exe`, `build-macos`.
+CI: `.github/workflows/ci.yml` — jobs `build-linux`, `build-exe`, `build-macos`.
 
 ## Структура пакетов
 
