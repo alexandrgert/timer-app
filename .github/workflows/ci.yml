@@ -60,7 +60,9 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0 libfontconfig1 libx11-6
 
       - name: Install snapcraft
-        run: sudo snap install snapcraft --classic
+        run: |
+          sudo snap install core22
+          sudo snap install snapcraft --classic
 
       - name: Set up Flatpak runtime
         run: |

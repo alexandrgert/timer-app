@@ -280,6 +280,7 @@ linux_pkg_build_snap() {
 
   mkdir -p "$LINUX_PKG_DIST_DIR"
   rm -f "$out"
+  export SNAPCRAFT_BUILD_ENVIRONMENT=host
   ( cd "$snap_build" && snapcraft pack --destructive-mode --output "$out" )
   rm -rf "$snap_build"
 
