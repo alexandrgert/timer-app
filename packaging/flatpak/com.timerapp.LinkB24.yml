@@ -12,6 +12,10 @@ finish-args:
   - --device=dri
   - --filesystem=home
 
+build-options:
+  strip: false
+  no-debuginfo: true
+
 modules:
   - name: tasktimer-link-b24
     buildsystem: simple
